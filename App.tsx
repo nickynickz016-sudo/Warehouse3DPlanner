@@ -25,7 +25,7 @@ const App: React.FC = () => {
   const config = warehouses.find(w => w.id === activeWarehouseId) || warehouses[0];
 
   const [stats, setStats] = useState<StorageStats>({ palletPositions: 0, cubicVolume: 0, usableEfficiency: 0, rackCount: 0 });
-  const [viewMode, setViewMode] = useState<'2D' | '3D'>('3D');
+  const [viewMode, setViewMode] = useState<'2D' | '3D'>('2D');
   const [aiResult, setAiResult] = useState<GeminiOptimizationResult | null>(null);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [isStatsOpen, setIsStatsOpen] = useState(true);
