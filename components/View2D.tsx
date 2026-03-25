@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import QRCode from 'qrcode';
-import { WarehouseConfig, LayoutItem, RackDetails, JobEntry } from '../types';
+import { WarehouseConfig, LayoutItem, RackDetails, JobEntry, PackageRecord } from '../types';
 import { PALLET_WIDTH, PALLET_DEPTH } from '../constants';
 import { 
     Move, Grid, Square, Box, 
@@ -295,6 +295,10 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
   // Custom Sales Prompt State
   const [salesPrompt, setSalesPrompt] = useState<{field: string, value: any, isRackDetail: boolean} | null>(null);
   const [salesPersonInput, setSalesPersonInput] = useState('');
+  
+  // Package Management State
+  const [activePackageJobId, setActivePackageJobId] = useState<string | null>(null);
+  const [packageSearch, setPackageSearch] = useState('');
   
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -623,6 +627,43 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
               const updatedJobs = currentJobs.filter(job => job.id !== jobId);
               const newStatus = updatedJobs.length === 0 ? 'available' as const : item.rackDetails!.status;
               return { ...item, rackDetails: { ...item.rackDetails!, jobs: updatedJobs, status: newStatus } };
+          }
+          return item;
+      });
+      onUpdateItems(activeLevelId, updatedItems);
+  };
+
+  const updatePackageStatus = (jobId: string, packageNumber: number, status: 'in' | 'out' | 'none') => {
+      if (selectedItemIds.length === 0 || !isAdmin) return;
+      const now = new Date().toLocaleString();
+      const updatedItems: LayoutItem[] = items.map(item => {
+          if (selectedItemIds.includes(item.id) && (item.type === 'rack' || item.type === 'open_cabin')) {
+              const currentJobs = item.rackDetails?.jobs || [];
+              const updatedJobs = currentJobs.map(job => {
+                  if (job.id === jobId) {
+                      const currentPackages = job.packages || [];
+                      const existingPackageIdx = currentPackages.findIndex(p => p.number === packageNumber);
+                      let updatedPackages = [...currentPackages];
+                      
+                      const existingRecord = existingPackageIdx >= 0 ? currentPackages[existingPackageIdx] : null;
+                      
+                      const newRecord: PackageRecord = {
+                          number: packageNumber,
+                          status,
+                          inTimestamp: status === 'in' ? now : existingRecord?.inTimestamp,
+                          outTimestamp: status === 'out' ? now : existingRecord?.outTimestamp
+                      };
+
+                      if (existingPackageIdx >= 0) {
+                          updatedPackages[existingPackageIdx] = newRecord;
+                      } else {
+                          updatedPackages.push(newRecord);
+                      }
+                      return { ...job, packages: updatedPackages };
+                  }
+                  return job;
+              });
+              return { ...item, rackDetails: { ...item.rackDetails!, jobs: updatedJobs } };
           }
           return item;
       });
@@ -981,6 +1022,12 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
                                                         className="w-full border border-gray-400 p-1.5 rounded bg-white text-black text-xs" 
                                                     />
                                                 </div>
+                                                <button 
+                                                    onClick={() => setActivePackageJobId(job.id)}
+                                                    className="col-span-2 mt-2 flex items-center justify-center gap-2 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-[10px] font-bold uppercase tracking-wider"
+                                                >
+                                                    <Box size={14} /> Manage Packages (1-500)
+                                                </button>
                                             </div>
                                         </div>
                                     ))}
@@ -993,6 +1040,104 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
               )}
           </div>
       )}
+
+      {/* --- Package Management Modal --- */}
+      {activePackageJobId && (() => {
+          const job = selectedItem?.rackDetails?.jobs?.find(j => j.id === activePackageJobId);
+          if (!job) return null;
+
+          const packages = job.packages || [];
+          const packageMap = new Map(packages.map(p => [p.number, p]));
+
+          return (
+              <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-[110] flex items-center justify-center p-4">
+                  <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl h-[90vh] flex flex-col border-4 border-blue-600 overflow-hidden">
+                      <div className="p-4 bg-blue-600 text-white flex justify-between items-center shrink-0">
+                          <div className="flex items-center gap-3">
+                              <Box size={24} className="text-blue-200" />
+                              <div>
+                                  <h2 className="text-xl font-black uppercase tracking-tighter leading-none">Package Tracking</h2>
+                                  <p className="text-[10px] font-bold text-blue-200 uppercase tracking-widest mt-1">Job: {job.jobNumber} | Shipper: {job.shipperName}</p>
+                              </div>
+                          </div>
+                          <button onClick={() => setActivePackageJobId(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+                              <X size={24} />
+                          </button>
+                      </div>
+
+                      <div className="p-4 bg-gray-50 border-b border-gray-200 flex flex-wrap items-center gap-4 shrink-0">
+                          <div className="flex-1 min-w-[200px] relative">
+                              <input 
+                                  type="text" 
+                                  placeholder="Search Package Number (1-500)..." 
+                                  className="w-full pl-10 pr-4 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:ring-0 transition-all font-bold text-gray-700"
+                                  value={packageSearch}
+                                  onChange={(e) => setPackageSearch(e.target.value)}
+                              />
+                              <Grid className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                          </div>
+                          <div className="flex items-center gap-4 text-[10px] font-bold uppercase tracking-wider">
+                              <div className="flex items-center gap-1"><div className="w-3 h-3 bg-white border border-gray-300 rounded"></div> None</div>
+                              <div className="flex items-center gap-1"><div className="w-3 h-3 bg-green-500 rounded"></div> Tagged IN</div>
+                              <div className="flex items-center gap-1"><div className="w-3 h-3 bg-red-500 rounded"></div> Tagged OUT</div>
+                          </div>
+                      </div>
+
+                      <div className="flex-1 overflow-y-auto p-4 custom-scrollbar bg-gray-100">
+                          <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-12 gap-2">
+                              {Array.from({ length: 500 }, (_, i) => i + 1)
+                                  .filter(num => !packageSearch || num.toString().includes(packageSearch))
+                                  .map(num => {
+                                      const record = packageMap.get(num);
+                                      const status = record?.status || 'none';
+                                      
+                                      return (
+                                          <div 
+                                              key={num}
+                                              className={`
+                                                  relative group aspect-square flex flex-col items-center justify-center rounded-lg border-2 transition-all cursor-pointer
+                                                  ${status === 'none' ? 'bg-white border-gray-200 hover:border-blue-300' : ''}
+                                                  ${status === 'in' ? 'bg-green-50 border-green-500 text-green-700' : ''}
+                                                  ${status === 'out' ? 'bg-red-50 border-red-500 text-red-700' : ''}
+                                              `}
+                                              onClick={() => {
+                                                  const nextStatus = status === 'none' ? 'in' : (status === 'in' ? 'out' : 'none');
+                                                  updatePackageStatus(job.id, num, nextStatus);
+                                              }}
+                                          >
+                                              <span className="text-sm font-black">{num}</span>
+                                              <span className="text-[8px] font-bold uppercase opacity-60">{status}</span>
+                                              
+                                              {/* Tooltip on hover */}
+                                              {(record?.inTimestamp || record?.outTimestamp) && (
+                                                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 bg-gray-900 text-white p-2 rounded shadow-xl text-[8px] font-mono opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+                                                      {record.inTimestamp && <div className="text-green-400">IN: {record.inTimestamp}</div>}
+                                                      {record.outTimestamp && <div className="text-red-400">OUT: {record.outTimestamp}</div>}
+                                                  </div>
+                                              )}
+                                          </div>
+                                      );
+                                  })}
+                          </div>
+                      </div>
+                      
+                      <div className="p-4 bg-white border-t border-gray-200 flex justify-between items-center shrink-0">
+                          <div className="text-xs font-bold text-gray-500">
+                              Total Packages: 500 | 
+                              <span className="text-green-600 ml-2">IN: {packages.filter(p => p.status === 'in').length}</span> | 
+                              <span className="text-red-600 ml-2">OUT: {packages.filter(p => p.status === 'out').length}</span>
+                          </div>
+                          <button 
+                              onClick={() => setActivePackageJobId(null)}
+                              className="px-8 py-2 bg-gray-900 text-white font-bold rounded-lg hover:bg-black transition-colors uppercase tracking-widest text-xs"
+                          >
+                              Done
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          );
+      })()}
 
       {/* --- Custom Sales Prompt Modal --- */}
       {salesPrompt && (

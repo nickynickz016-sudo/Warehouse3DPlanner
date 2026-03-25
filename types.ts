@@ -14,6 +14,13 @@ export interface ZoneSizes {
   dispatch: number; // m2
 }
 
+export interface PackageRecord {
+  number: number;
+  status: 'in' | 'out' | 'none';
+  inTimestamp?: string;
+  outTimestamp?: string;
+}
+
 export interface JobEntry {
   id: string;
   jobNumber: string;
@@ -24,6 +31,7 @@ export interface JobEntry {
   paymentCycle: 'Monthly' | 'Quarterly' | 'Yearly';
   status: 'active' | 'completed' | 'pending';
   notes?: string;
+  packages?: PackageRecord[];
 }
 
 export interface RackDetails {
