@@ -5,7 +5,7 @@ import { PALLET_WIDTH, PALLET_DEPTH } from '../constants';
 import { 
     Move, Grid, Square, Box, 
     DoorOpen, Wind, Video, Footprints, Droplet, Flame,
-    X, User, FileText, Activity, RotateCw, AlignJustify, Warehouse, DollarSign, Calendar, Calculator, Database, Shield, Lock, Monitor, Scan, QrCode, Download, Factory, ZoomIn, ZoomOut, Maximize, Copy, Minus,
+    X, User, FileText, Activity, RotateCw, AlignJustify, Warehouse, DollarSign, Calendar, Calculator, Database, Shield, Lock, Monitor, Scan, QrCode, Download, Factory, ZoomIn, ZoomOut, Maximize, Minimize, Copy, Minus,
     Plus, Trash2, Clock
 } from 'lucide-react';
 
@@ -14,6 +14,7 @@ interface Props {
   onUpdateItems: (levelId: string, items: LayoutItem[]) => void;
   activeLevelId: string;
   isAdmin: boolean;
+  onUpdateConfig?: (newConfig: WarehouseConfig) => void;
 }
 
 type Tool = 'select' | 'rack' | 'office' | 'obstacle' | 'passageway' | 'fire_exit' | 'washroom' | 'entrance' | 'camera' | 'ac' | 'stairs' | 'store' | 'open_cabin' | 'open_space_storage' | 'warehouse';
@@ -110,7 +111,6 @@ const renderItemVisuals = (item: LayoutItem, isSelected: boolean) => {
                     <path d={`M ${item.width-60} ${item.height} Q ${item.width-10} ${item.height} ${item.width-10} ${item.height-50}`} stroke="black" strokeWidth="1" fill="none" strokeDasharray="5,5" />
                     <rect x={20} y={20} width={120} height={60} fill="#bfdbfe" stroke="#60a5fa" />
                     <circle cx={80} cy={100} r={20} fill="#60a5fa" />
-                    <text x={item.width/2} y={item.height/2} textAnchor="middle" fontSize={Math.min(item.width, item.height)/5} fill="#1e3a8a" opacity="0.3" fontWeight="bold">OFFICE</text>
                 </g>
             );
         case 'warehouse':
@@ -118,7 +118,6 @@ const renderItemVisuals = (item: LayoutItem, isSelected: boolean) => {
                 <g>
                     <rect x={0} y={0} width={item.width} height={item.height} fill={item.color} stroke={strokeColor} strokeWidth={strokeWidth} />
                     <rect x={item.width/2 - 50} y={item.height-10} width={100} height={10} fill="#6b7280" />
-                    <text x={item.width/2} y={item.height/2} textAnchor="middle" fontSize={Math.min(item.width, item.height)/6} fill="#374151" opacity="0.5" fontWeight="bold">WAREHOUSE</text>
                 </g>
             );
         case 'open_cabin':
@@ -133,7 +132,6 @@ const renderItemVisuals = (item: LayoutItem, isSelected: boolean) => {
                     <rect x={0} y={0} width={item.width} height={item.height} fill={cabinFill} stroke={isSelected ? '#ef4444' : statusStroke} strokeWidth={isSelected ? 5 : 2} />
                     <rect x={10} y={10} width={item.width-20} height={item.height-20} fill="none" stroke={statusStroke} strokeWidth="2" strokeDasharray="5,5" />
                     <rect x={30} y={30} width={60} height={40} fill={status === 'available' ? '#5eead4' : 'white'} stroke={statusStroke} />
-                    <text x={item.width/2} y={item.height/2} textAnchor="middle" fontSize={Math.min(item.width, item.height)/6} fill={statusStroke} opacity="0.7" fontWeight="bold">{statusText}</text>
                     {status === 'occupied' && <circle cx={item.width-20} cy={20} r={10} fill="red" />}
                     {status === 'reserved' && <circle cx={item.width-20} cy={20} r={10} fill="orange" />}
                 </g>
@@ -144,7 +142,6 @@ const renderItemVisuals = (item: LayoutItem, isSelected: boolean) => {
                     <rect x={0} y={0} width={item.width} height={item.height} fill={item.color} fillOpacity={0.4} stroke={strokeColor} strokeWidth={strokeWidth} strokeDasharray="10,5" />
                     <line x1={0} y1={0} x2={item.width} y2={item.height} stroke={strokeColor} strokeWidth="1" opacity="0.2" />
                     <line x1={item.width} y1={0} x2={0} y2={item.height} stroke={strokeColor} strokeWidth="1" opacity="0.2" />
-                    <text x={item.width/2} y={item.height/2} textAnchor="middle" fontSize={Math.min(item.width, item.height)/6} fill="#c2410c" fontWeight="bold">OPEN SPACE</text>
                 </g>
             );
         case 'store':
@@ -154,7 +151,6 @@ const renderItemVisuals = (item: LayoutItem, isSelected: boolean) => {
                     <rect x={10} y={10} width={item.width-20} height={30} fill="#cbd5e1" />
                     <rect x={10} y={item.height-40} width={item.width-20} height={30} fill="#cbd5e1" />
                     <rect x={10} y={10} width={30} height={item.height-20} fill="#cbd5e1" />
-                    <text x={item.width/2} y={item.height/2} textAnchor="middle" fontSize={Math.min(item.width, item.height)/5} fill="#475569" opacity="0.3" fontWeight="bold">STORE</text>
                 </g>
             );
         case 'camera':
@@ -184,21 +180,18 @@ const renderItemVisuals = (item: LayoutItem, isSelected: boolean) => {
         default:
             return (
                 <g>
-                <rect x={0} y={0} width={item.width} height={item.height} fill={item.color || '#ccc'} stroke={strokeColor} strokeWidth={strokeWidth} />
-                {item.label && (
-                    <text x={item.width/2} y={item.height/2} textAnchor="middle" dy=".3em" fontSize={Math.min(item.width, item.height)/4} fill="#333">{item.label}</text>
-                )}
+                    <rect x={0} y={0} width={item.width} height={item.height} fill={item.color || '#ccc'} stroke={strokeColor} strokeWidth={strokeWidth} />
                 </g>
             );
     }
 };
 
 // --- Component: Items Layer (Memoized for Performance) ---
-const ItemsLayer = React.memo(({ items, selectedItemId, onMouseDown }: { items: LayoutItem[], selectedItemId: string | null, onMouseDown: (e: any, id: string) => void }) => {
+const ItemsLayer = React.memo(({ items, selectedItemIds, onMouseDown, labelFontSize }: { items: LayoutItem[], selectedItemIds: string[], onMouseDown: (e: any, id: string) => void, labelFontSize: number }) => {
     return (
         <>
             {items.map((item) => {
-                const isSelected = selectedItemId === item.id;
+                const isSelected = selectedItemIds.includes(item.id);
                 return (
                     <g 
                         key={item.id}
@@ -208,19 +201,55 @@ const ItemsLayer = React.memo(({ items, selectedItemId, onMouseDown }: { items: 
                     >
                         {renderItemVisuals(item, isSelected)}
                         
-                        {item.type === 'rack' && (
-                            <text x={item.width/2} y={item.height/2} fontSize="20" textAnchor="middle" fill="#000" fontWeight="bold" transform={`rotate(${-item.rotation}, ${item.width/2}, ${item.height/2})`}>
-                                {item.rackDetails?.jobs && item.rackDetails.jobs.length > 0 
-                                    ? (item.rackDetails.jobs.length === 1 ? item.rackDetails.jobs[0].shipperName : `${item.rackDetails.jobs.length} Jobs`)
-                                    : (item.rackDetails?.shipperName || '')}
-                            </text>
-                        )}
-                        {item.type === 'open_cabin' && (
-                            <text x={item.width/2} y={item.height/2 + 30} fontSize="16" textAnchor="middle" fill="#000" fontWeight="bold" transform={`rotate(${-item.rotation}, ${item.width/2}, ${item.height/2})`}>
-                                {item.rackDetails?.jobs && item.rackDetails.jobs.length > 0 
-                                    ? (item.rackDetails.jobs.length === 1 ? item.rackDetails.jobs[0].shipperName : `${item.rackDetails.jobs.length} Jobs`)
-                                    : (item.rackDetails?.shipperName || '')}
-                            </text>
+                        {/* Labels & Details Layer */}
+                        {(item.type === 'rack' || item.type === 'open_cabin') ? (
+                            <foreignObject 
+                                x={5} 
+                                y={5} 
+                                width={Math.max(1, item.width - 10)} 
+                                height={Math.max(1, item.height - 10)} 
+                                transform={`rotate(${-item.rotation}, ${item.width/2}, ${item.height/2})`}
+                                style={{ pointerEvents: 'none' }}
+                            >
+                                <div className="w-full h-full flex flex-col items-center justify-center text-center overflow-hidden">
+                                    <span 
+                                        className="font-bold text-black leading-tight break-words px-1"
+                                        style={{ fontSize: `${labelFontSize}px` }}
+                                    >
+                                        {item.rackDetails?.jobs && item.rackDetails.jobs.length > 0 
+                                            ? (item.rackDetails.jobs.length === 1 ? item.rackDetails.jobs[0].shipperName : `${item.rackDetails.jobs.length} Jobs`)
+                                            : (item.rackDetails?.shipperName || item.label || '')}
+                                    </span>
+                                    {item.type === 'rack' && item.rackDetails?.salesPerson && (
+                                        <span 
+                                            className="text-blue-700 font-bold mt-1 truncate w-full"
+                                            style={{ fontSize: `${Math.max(6, labelFontSize - 2)}px` }}
+                                        >
+                                            {item.rackDetails.salesPerson}
+                                        </span>
+                                    )}
+                                </div>
+                            </foreignObject>
+                        ) : (
+                            item.label && (
+                                <foreignObject 
+                                    x={5} 
+                                    y={5} 
+                                    width={Math.max(1, item.width - 10)} 
+                                    height={Math.max(1, item.height - 10)} 
+                                    transform={`rotate(${-item.rotation}, ${item.width/2}, ${item.height/2})`}
+                                    style={{ pointerEvents: 'none' }}
+                                >
+                                    <div className="w-full h-full flex items-center justify-center text-center overflow-hidden">
+                                        <span 
+                                            className="font-bold text-gray-700 leading-tight break-words px-1 uppercase opacity-70"
+                                            style={{ fontSize: `${labelFontSize}px` }}
+                                        >
+                                            {item.label}
+                                        </span>
+                                    </div>
+                                </foreignObject>
+                            )
                         )}
                     </g>
                 );
@@ -228,11 +257,13 @@ const ItemsLayer = React.memo(({ items, selectedItemId, onMouseDown }: { items: 
         </>
     );
 }, (prev, next) => {
-    return prev.items === next.items && prev.selectedItemId === next.selectedItemId;
+    return prev.items === next.items && 
+           JSON.stringify(prev.selectedItemIds) === JSON.stringify(next.selectedItemIds) && 
+           prev.labelFontSize === next.labelFontSize;
 });
 
 
-const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin }) => {
+const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin, onUpdateConfig }) => {
   const { dimensions } = config;
   const activeLevel = config.levels.find(l => l.id === activeLevelId);
   const items = activeLevel?.items || [];
@@ -243,27 +274,37 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
   const volumePercentage = levelVolumeCapacity > 0 ? (usedVolume / levelVolumeCapacity) * 100 : 0;
 
   const [activeTool, setActiveTool] = useState<Tool>('select');
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
+  const [dragOffsets, setDragOffsets] = useState<Map<string, { x: number, y: number }>>(new Map());
   const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
   
   // Hover state for Ghost Preview
   const [hoverPos, setHoverPos] = useState<{x: number, y: number} | null>(null);
   
   // Zoom State
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(0.4);
   const [isPropertiesMinimized, setIsPropertiesMinimized] = useState(false);
+  const [isPropertiesExpanded, setIsPropertiesExpanded] = useState(false);
+  
+  // Draggable Properties Panel State
+  const [panelPos, setPanelPos] = useState({ x: 16, y: 16 }); // top, right
+  const [isDraggingPanel, setIsDraggingPanel] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+
+  // Custom Sales Prompt State
+  const [salesPrompt, setSalesPrompt] = useState<{field: string, value: any, isRackDetail: boolean} | null>(null);
+  const [salesPersonInput, setSalesPersonInput] = useState('');
   
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Reset minimize state when selecting a new item
   useEffect(() => {
-    if (selectedItemId) {
+    if (selectedItemIds.length > 0) {
         setIsPropertiesMinimized(false);
     }
-  }, [selectedItemId]);
+  }, [selectedItemIds]);
 
   const getMousePos = (evt: React.MouseEvent | React.TouchEvent) => {
     if (!svgRef.current) return { x: 0, y: 0 };
@@ -292,7 +333,7 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
   // Keyboard controls for fine-tuning position
   useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
-          if (!selectedItemId || !isAdmin) return;
+          if (selectedItemIds.length === 0 || !isAdmin) return;
           
           // Avoid moving items when typing in input fields
           if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA' || document.activeElement?.tagName === 'SELECT') return;
@@ -312,7 +353,7 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
           e.preventDefault();
 
           const updatedItems = items.map(item => {
-              if (item.id === selectedItemId) {
+              if (selectedItemIds.includes(item.id)) {
                   return { ...item, x: Math.round(item.x + dx), y: Math.round(item.y + dy) };
               }
               return item;
@@ -322,23 +363,47 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
 
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedItemId, isAdmin, items, activeLevelId, onUpdateItems]);
+  }, [selectedItemIds, isAdmin, items, activeLevelId, onUpdateItems]);
 
   const handleMouseDown = (e: React.MouseEvent | React.TouchEvent, itemId?: string) => {
       e.stopPropagation();
       const pos = getMousePos(e);
       setQrCodeUrl(null);
 
+      const isShiftPressed = (e as React.MouseEvent).shiftKey;
+
       if (activeTool === 'select' || !isAdmin) {
           if (itemId) {
-              setSelectedItemId(itemId);
-              const item = items.find(i => i.id === itemId);
-              if (item && isAdmin) {
-                  setDraggingId(itemId);
-                  setDragOffset({ x: pos.x - item.x, y: pos.y - item.y });
+              let newSelectedIds = [...selectedItemIds];
+              
+              if (isShiftPressed) {
+                  if (newSelectedIds.includes(itemId)) {
+                      newSelectedIds = newSelectedIds.filter(id => id !== itemId);
+                  } else {
+                      newSelectedIds.push(itemId);
+                  }
+              } else {
+                  // If clicking an item that's already part of a multi-selection, keep the selection to allow dragging the group
+                  if (!newSelectedIds.includes(itemId)) {
+                      newSelectedIds = [itemId];
+                  }
+              }
+              
+              setSelectedItemIds(newSelectedIds);
+
+              if (isAdmin) {
+                  setIsDragging(true);
+                  const newOffsets = new Map();
+                  newSelectedIds.forEach(id => {
+                      const item = items.find(i => i.id === id);
+                      if (item) {
+                          newOffsets.set(id, { x: pos.x - item.x, y: pos.y - item.y });
+                      }
+                  });
+                  setDragOffsets(newOffsets);
               }
           } else {
-              setSelectedItemId(null);
+              setSelectedItemIds([]);
           }
       } else if (isAdmin) {
           // Centered addition
@@ -351,27 +416,33 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
       // Update Ghost Position
       setHoverPos(pos);
 
-      if (draggingId && (activeTool === 'select') && isAdmin) {
+      if (isDragging && (activeTool === 'select') && isAdmin) {
           e.preventDefault();
-          const newX = pos.x - dragOffset.x;
-          const newY = pos.y - dragOffset.y;
-          const snappedX = Math.round(newX / 10) * 10;
-          const snappedY = Math.round(newY / 10) * 10;
-
-          const updatedItems = items.map(item => 
-              item.id === draggingId ? { ...item, x: snappedX, y: snappedY } : item
-          );
+          
+          const updatedItems = items.map(item => {
+              if (selectedItemIds.includes(item.id)) {
+                  const offset = dragOffsets.get(item.id);
+                  if (offset) {
+                      const newX = pos.x - offset.x;
+                      const newY = pos.y - offset.y;
+                      const snappedX = Math.round(newX / 10) * 10;
+                      const snappedY = Math.round(newY / 10) * 10;
+                      return { ...item, x: snappedX, y: snappedY };
+                  }
+              }
+              return item;
+          });
           onUpdateItems(activeLevelId, updatedItems);
       }
   };
 
   const handleMouseUp = () => {
-      setDraggingId(null);
+      setIsDragging(false);
   };
   
   const handleMouseLeave = () => {
       setHoverPos(null);
-      setDraggingId(null);
+      setIsDragging(false);
   };
 
   const addItem = (mouseX: number, mouseY: number) => {
@@ -395,39 +466,69 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
 
       onUpdateItems(activeLevelId, [...items, newItem]);
       setActiveTool('select');
-      setSelectedItemId(newItem.id);
+      setSelectedItemIds([newItem.id]);
   };
 
-  const duplicateItem = (id: string) => {
+  const duplicateItem = (id?: string) => {
       if (!isAdmin) return;
-      const itemToClone = items.find(i => i.id === id);
-      if (!itemToClone) return;
+      
+      const idsToClone = id ? (selectedItemIds.includes(id) ? selectedItemIds : [id]) : selectedItemIds;
+      if (idsToClone.length === 0) return;
+      
+      const newItems: LayoutItem[] = [];
+      const newIds: string[] = [];
 
-      const newItem: LayoutItem = {
-          ...itemToClone,
-          id: `${itemToClone.type}-${Date.now()}`,
-          x: itemToClone.x + 20, // Offset slightly
-          y: itemToClone.y + 20,
-          label: itemToClone.label ? `${itemToClone.label} (Copy)` : ''
-      };
+      idsToClone.forEach(cloneId => {
+          const itemToClone = items.find(i => i.id === cloneId);
+          if (!itemToClone) return;
 
-      onUpdateItems(activeLevelId, [...items, newItem]);
-      setSelectedItemId(newItem.id);
+          const newId = `${itemToClone.type}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+          const newItem: LayoutItem = {
+              ...itemToClone,
+              id: newId,
+              x: itemToClone.x + 20, // Offset slightly
+              y: itemToClone.y + 20,
+              label: itemToClone.label ? `${itemToClone.label} (Copy)` : ''
+          };
+          newItems.push(newItem);
+          newIds.push(newId);
+      });
+
+      onUpdateItems(activeLevelId, [...items, ...newItems]);
+      setSelectedItemIds(newIds);
   };
 
-  const deleteItem = (id: string) => {
+  const deleteItem = (id?: string) => {
       if (!isAdmin) return;
-      onUpdateItems(activeLevelId, items.filter(i => i.id !== id));
-      setSelectedItemId(null);
+      const idsToDelete = id ? (selectedItemIds.includes(id) ? selectedItemIds : [id]) : selectedItemIds;
+      if (idsToDelete.length === 0) return;
+      onUpdateItems(activeLevelId, items.filter(i => !idsToDelete.includes(i.id)));
+      setSelectedItemIds([]);
   };
 
-  const updateSelectedProperty = (field: keyof LayoutItem | keyof RackDetails, value: any, isRackDetail = false) => {
-      if (!selectedItemId || !isAdmin) return;
+  const updateSelectedProperty = (field: keyof LayoutItem | keyof RackDetails, value: any, isRackDetail = false, salesPersonFromPrompt?: string) => {
+      if (selectedItemIds.length === 0 || !isAdmin) return;
+
+      let salesPerson = salesPersonFromPrompt || '';
+      if (isRackDetail && field === 'status' && (value === 'occupied' || value === 'reserved') && !salesPersonFromPrompt) {
+          setSalesPrompt({ field, value, isRackDetail });
+          setSalesPersonInput('');
+          return;
+      }
+
       const updatedItems: LayoutItem[] = items.map(item => {
-          if (item.id === selectedItemId) {
+          if (selectedItemIds.includes(item.id)) {
               if (isRackDetail && (item.type === 'rack' || item.type === 'open_cabin')) {
                   const currentDetails = item.rackDetails || { status: 'available' as const, jobs: [], volumeOccupied: 0, enclosureType: 'Open Space' as const };
-                  return { ...item, rackDetails: { ...currentDetails, [field]: value } as RackDetails };
+                  const newDetails = { ...currentDetails, [field]: value } as RackDetails;
+                  
+                  if (salesPerson) {
+                      newDetails.salesPerson = salesPerson;
+                  } else if (field === 'status' && value === 'available') {
+                      newDetails.salesPerson = ''; // Clear if available
+                  }
+                  
+                  return { ...item, rackDetails: newDetails };
               }
               return { ...item, [field]: value } as LayoutItem;
           }
@@ -436,8 +537,41 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
       onUpdateItems(activeLevelId, updatedItems);
   };
 
+  const handlePanelDragStart = (e: React.MouseEvent) => {
+      setIsDraggingPanel(true);
+      setDragStart({ x: e.clientX, y: e.clientY });
+  };
+
+  useEffect(() => {
+      const handleMouseMove = (e: MouseEvent) => {
+          if (isDraggingPanel) {
+              const dx = dragStart.x - e.clientX;
+              const dy = e.clientY - dragStart.y;
+              setPanelPos(prev => ({
+                  x: prev.x + dx,
+                  y: prev.y + dy
+              }));
+              setDragStart({ x: e.clientX, y: e.clientY });
+          }
+      };
+
+      const handleMouseUp = () => {
+          setIsDraggingPanel(false);
+      };
+
+      if (isDraggingPanel) {
+          window.addEventListener('mousemove', handleMouseMove);
+          window.addEventListener('mouseup', handleMouseUp);
+      }
+
+      return () => {
+          window.removeEventListener('mousemove', handleMouseMove);
+          window.removeEventListener('mouseup', handleMouseUp);
+      };
+  }, [isDraggingPanel, dragStart]);
+
   const addJobToSelected = () => {
-      if (!selectedItemId || !isAdmin) return;
+      if (selectedItemIds.length === 0 || !isAdmin) return;
       const newJob: JobEntry = {
           id: `job-${Date.now()}`,
           jobNumber: '',
@@ -450,7 +584,7 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
       };
       
       const updatedItems: LayoutItem[] = items.map(item => {
-          if (item.id === selectedItemId && (item.type === 'rack' || item.type === 'open_cabin')) {
+          if (selectedItemIds.includes(item.id) && (item.type === 'rack' || item.type === 'open_cabin')) {
               const currentJobs = item.rackDetails?.jobs || [];
               return { 
                   ...item, 
@@ -467,9 +601,9 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
   };
 
   const updateJobInSelected = (jobId: string, field: keyof JobEntry, value: any) => {
-      if (!selectedItemId || !isAdmin) return;
+      if (selectedItemIds.length === 0 || !isAdmin) return;
       const updatedItems: LayoutItem[] = items.map(item => {
-          if (item.id === selectedItemId && (item.type === 'rack' || item.type === 'open_cabin')) {
+          if (selectedItemIds.includes(item.id) && (item.type === 'rack' || item.type === 'open_cabin')) {
               const currentJobs = item.rackDetails?.jobs || [];
               const updatedJobs = currentJobs.map(job => 
                   job.id === jobId ? { ...job, [field]: value } : job
@@ -482,9 +616,9 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
   };
 
   const removeJobFromSelected = (jobId: string) => {
-      if (!selectedItemId || !isAdmin) return;
+      if (selectedItemIds.length === 0 || !isAdmin) return;
       const updatedItems: LayoutItem[] = items.map(item => {
-          if (item.id === selectedItemId && (item.type === 'rack' || item.type === 'open_cabin')) {
+          if (selectedItemIds.includes(item.id) && (item.type === 'rack' || item.type === 'open_cabin')) {
               const currentJobs = item.rackDetails?.jobs || [];
               const updatedJobs = currentJobs.filter(job => job.id !== jobId);
               const newStatus = updatedJobs.length === 0 ? 'available' as const : item.rackDetails!.status;
@@ -503,8 +637,14 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
       } catch (err) { console.error(err); }
   };
 
-  const selectedItem = items.find(i => i.id === selectedItemId);
+  const selectedItem = selectedItemIds.length === 1 ? items.find(i => i.id === selectedItemIds[0]) : null;
   const supportsQR = selectedItem && ['rack', 'open_cabin', 'open_space_storage'].includes(selectedItem.type);
+
+  const handleConfigChange = (field: string, value: any) => {
+    if (!isAdmin || !onUpdateConfig) return;
+    const newConfig = { ...config, [field]: value };
+    onUpdateConfig(newConfig);
+  };
 
   // --- Toolbar Component ---
   const ToolButton = ({ tool, icon: Icon, label }: { tool: Tool, icon: any, label: string }) => (
@@ -576,94 +716,176 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
       
       {/* --- Properties Panel --- */}
       {selectedItem && (
-          <div className={`absolute top-4 right-4 w-96 bg-white rounded-lg shadow-xl z-20 border border-gray-300 flex flex-col transition-all duration-300 ${isPropertiesMinimized ? 'h-auto' : 'bottom-4 max-h-[85vh]'}`}>
-              <div className="p-3 bg-brand-primary text-white rounded-t-lg flex justify-between items-center border-b-4 border-brand-accent shrink-0">
+          <div 
+            style={{ top: `${panelPos.y}px`, right: `${panelPos.x}px` }}
+            className={`absolute bg-white rounded-lg shadow-xl z-20 border border-gray-300 flex flex-col transition-all duration-300 ${isPropertiesExpanded ? 'w-[600px]' : 'w-96'} ${isPropertiesMinimized ? 'h-auto' : 'bottom-4 max-h-[85vh]'}`}
+          >
+              <div 
+                onMouseDown={handlePanelDragStart}
+                className="p-3 bg-brand-primary text-white rounded-t-lg flex justify-between items-center border-b-4 border-brand-accent shrink-0 cursor-move active:cursor-grabbing"
+              >
                   <div className="flex items-center gap-2">
-                    <span className="font-bold text-sm uppercase text-brand-accent">{selectedItem.type.replace(/_/g, ' ')} Properties</span>
+                    <Move size={14} className="text-brand-accent" />
+                    <span className="font-bold text-sm uppercase text-brand-accent">
+                        {selectedItemIds.length > 1 ? `${selectedItemIds.length} Items Selected` : selectedItem?.type.replace(/_/g, ' ') + ' Properties'}
+                    </span>
                     {!isAdmin && <Lock size={12} className="text-gray-400"/>}
                   </div>
                   <div className="flex items-center gap-2">
                       <button 
-                        onClick={() => setIsPropertiesMinimized(!isPropertiesMinimized)} 
-                        className="text-white hover:text-gray-300"
+                        onClick={(e) => { e.stopPropagation(); setIsPropertiesExpanded(!isPropertiesExpanded); }}
+                        className="text-white hover:text-brand-accent transition-colors"
+                        title={isPropertiesExpanded ? "Shrink Width" : "Expand Width"}
+                      >
+                          {isPropertiesExpanded ? <Minimize size={16} /> : <Maximize size={16} />}
+                      </button>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setIsPropertiesMinimized(!isPropertiesMinimized); }} 
+                        className="text-white hover:text-brand-accent transition-colors"
                         title={isPropertiesMinimized ? "Expand" : "Minimize"}
                       >
-                          {isPropertiesMinimized ? <Maximize size={16} /> : <Minus size={16} />}
+                          {isPropertiesMinimized ? <Plus size={16} /> : <Minus size={16} />}
                       </button>
-                      <button onClick={() => duplicateItem(selectedItem.id)} className={`text-white ${isAdmin ? 'hover:text-blue-300' : 'opacity-50 cursor-not-allowed'}`} disabled={!isAdmin} title="Duplicate Item"><Copy size={16} /></button>
-                      <button onClick={() => deleteItem(selectedItem.id)} className={`text-white ${isAdmin ? 'hover:text-red-300' : 'opacity-50 cursor-not-allowed'}`} disabled={!isAdmin} title="Delete Item"><Trash2 size={16} /></button>
-                      <button onClick={() => setSelectedItemId(null)} className="text-white hover:text-gray-300" title="Close Properties"><X size={16} /></button>
+                      <button onClick={(e) => { e.stopPropagation(); duplicateItem(); }} className={`text-white ${isAdmin ? 'hover:text-blue-300' : 'opacity-50 cursor-not-allowed'}`} disabled={!isAdmin} title="Duplicate Items"><Copy size={16} /></button>
+                      <button onClick={(e) => { e.stopPropagation(); deleteItem(); }} className={`text-white ${isAdmin ? 'hover:text-red-300' : 'opacity-50 cursor-not-allowed'}`} disabled={!isAdmin} title="Delete Items"><Trash2 size={16} /></button>
+                      <button onClick={(e) => { e.stopPropagation(); setSelectedItemIds([]); }} className="text-white hover:text-red-500 transition-colors" title="Close Properties"><X size={16} /></button>
                   </div>
               </div>
               
               {!isPropertiesMinimized && (
               <div className="p-4 overflow-y-auto custom-scrollbar flex-1 bg-white space-y-4">
-                  {/* Dimensions */}
-                  <div className="bg-white p-3 rounded border border-gray-300 shadow-sm">
-                      <h5 className="font-bold text-black mb-2 border-b border-gray-200 pb-1">Dimensions & Position</h5>
-                      <div className="grid grid-cols-2 gap-3">
-                          <div>
-                              <label className="block text-black mb-1 font-bold">Width (cm)</label>
-                              <input type="number" value={selectedItem.width} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('width', Number(e.target.value))} className="w-full border border-gray-400 p-2 rounded bg-white text-black disabled:bg-gray-100 placeholder-gray-400" />
+                  {selectedItemIds.length > 1 ? (
+                      <div className="text-center py-10 space-y-4">
+                          <div className="bg-gray-100 p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto">
+                              <Grid size={32} className="text-gray-400" />
                           </div>
-                          <div>
-                              <label className="block text-black mb-1 font-bold">Length (cm)</label>
-                              <input type="number" value={selectedItem.height} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('height', Number(e.target.value))} className="w-full border border-gray-400 p-2 rounded bg-white text-black disabled:bg-gray-100 placeholder-gray-400" />
-                          </div>
-                          <div>
-                              <label className="block text-black mb-1 font-bold">Height (cm)</label>
-                              <input type="number" value={selectedItem.depth || 0} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('depth', Number(e.target.value))} className="w-full border border-gray-400 p-2 rounded bg-white text-black disabled:bg-gray-100 placeholder-gray-400" />
-                          </div>
-                          <div>
-                            <label className="block text-black mb-1 font-bold flex items-center gap-1"><RotateCw size={10}/> Rotation</label>
-                            <div className="flex gap-2">
-                                <input type="range" min="0" max="360" step="15" value={selectedItem.rotation} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('rotation', Number(e.target.value))} className="w-full accent-brand-accent"/>
-                                <span className="w-8 text-center bg-white border border-gray-400 rounded p-1 text-black font-mono">{selectedItem.rotation}°</span>
-                            </div>
-                          </div>
+                          <p className="text-gray-500 font-medium">Multiple items selected. You can move them together or delete/duplicate the group.</p>
                       </div>
-                      <div className="mt-2">
-                          <label className="block text-black mb-1 font-bold">Label</label>
-                          <input type="text" value={selectedItem.label || ''} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('label', e.target.value)} className="w-full border border-gray-400 p-2 rounded bg-white disabled:bg-gray-100 font-bold text-black placeholder-gray-400" />
-                      </div>
-                  </div>
-                  
-                  {/* QR Code */}
-                  {supportsQR && (
-                     <div className="bg-white p-3 rounded border border-gray-300 shadow-sm">
-                         <div className="flex justify-between items-center mb-2 border-b border-gray-200 pb-1">
-                             <h4 className="font-bold text-black flex items-center gap-2"><QrCode size={14}/> Quick Response Code</h4>
-                         </div>
-                         {!qrCodeUrl ? (
-                             <button onClick={() => generateQRCode(selectedItem)} className="w-full py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded border border-gray-300 text-xs transition-colors flex items-center justify-center gap-2"><QrCode size={14} /> Generate QR Code</button>
-                         ) : (
-                             <div className="flex flex-col items-center gap-2">
-                                 <img src={qrCodeUrl} alt="Item QR Code" className="w-32 h-32 border border-gray-200 rounded p-1" />
-                                 <a href={qrCodeUrl} download={`QR-${selectedItem.label || selectedItem.id}.png`} className="w-full py-1.5 bg-brand-accent hover:bg-yellow-400 text-black font-bold rounded text-xs transition-colors flex items-center justify-center gap-2"><Download size={14} /> Download QR Image</a>
-                             </div>
-                         )}
-                     </div>
-                  )}
-
-                  {/* Rack Details */}
-                  {(selectedItem.type === 'rack' || selectedItem.type === 'open_cabin') && selectedItem.rackDetails && (
-                      <div className="space-y-4">
-                          <div className="bg-white p-3 rounded border border-gray-300 shadow-sm">
-                                <div className="flex justify-between items-center mb-3 border-b border-gray-200 pb-1">
-                                    <h4 className="font-bold text-black flex items-center gap-2"><Activity size={14}/> Rack Configuration</h4>
+                  ) : selectedItem && (
+                      <>
+                        {/* Dimensions */}
+                        <div className="bg-white p-3 rounded border border-gray-300 shadow-sm">
+                            <h5 className="font-bold text-black mb-2 border-b border-gray-200 pb-1">Dimensions & Position</h5>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-black mb-1 font-bold">Width (cm)</label>
+                                    <input type="number" value={selectedItem.width} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('width', Number(e.target.value))} className="w-full border border-gray-400 p-2 rounded bg-white text-black disabled:bg-gray-100 placeholder-gray-400" />
+                                </div>
+                                <div>
+                                    <label className="block text-black mb-1 font-bold">Length (cm)</label>
+                                    <input type="number" value={selectedItem.height} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('height', Number(e.target.value))} className="w-full border border-gray-400 p-2 rounded bg-white text-black disabled:bg-gray-100 placeholder-gray-400" />
+                                </div>
+                                <div>
+                                    <label className="block text-black mb-1 font-bold">Height (cm)</label>
+                                    <input type="number" value={selectedItem.depth || 0} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('depth', Number(e.target.value))} className="w-full border border-gray-400 p-2 rounded bg-white text-black disabled:bg-gray-100 placeholder-gray-400" />
+                                </div>
+                                <div>
+                                    <label className="block text-black mb-1 font-bold flex items-center gap-1"><RotateCw size={10}/> Rotation</label>
                                     <div className="flex gap-2">
-                                        <select value={selectedItem.rackDetails.status} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('status', e.target.value, true)} className="border border-gray-400 p-1 rounded font-bold uppercase text-[10px] tracking-wider text-black bg-white">
-                                            <option value="available">Available</option>
-                                            <option value="occupied">Occupied</option>
-                                            <option value="reserved">Reserved</option>
-                                        </select>
-                                        <select value={selectedItem.rackDetails.enclosureType} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('enclosureType', e.target.value, true)} className="border border-gray-400 p-1 rounded bg-white text-black text-[10px] font-bold">
-                                            <option value="Open Space">Open Space</option>
-                                            <option value="Shuttered Warehouse">Shuttered</option>
-                                            <option value="Close Cabin">Close Cabin</option>
-                                        </select>
+                                        <input type="range" min="0" max="360" step="15" value={selectedItem.rotation} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('rotation', Number(e.target.value))} className="w-full accent-brand-accent"/>
+                                        <span className="w-8 text-center bg-white border border-gray-400 rounded p-1 text-black font-mono">{selectedItem.rotation}°</span>
                                     </div>
                                 </div>
+                            </div>
+                            <div className="mt-2">
+                                <label className="block text-black mb-1 font-bold">Label</label>
+                                <input type="text" value={selectedItem.label || ''} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('label', e.target.value)} className="w-full border border-gray-400 p-2 rounded bg-white disabled:bg-gray-100 font-bold text-black placeholder-gray-400" />
+                            </div>
+                        </div>
+
+                        {/* Visual Settings */}
+                        <div className="bg-blue-50 p-3 rounded border border-blue-200 shadow-sm">
+                            <h5 className="font-bold text-blue-900 mb-2 border-b border-blue-200 pb-1 flex items-center gap-2">
+                                <AlignJustify size={14} className="text-blue-600" /> Visual Settings
+                            </h5>
+                            <div>
+                                <label className="block text-blue-800 mb-1 text-[10px] font-bold uppercase">Label Font Size (px)</label>
+                                <div className="flex items-center gap-3">
+                                    <input 
+                                        type="range" 
+                                        min="6" 
+                                        max="24" 
+                                        step="1"
+                                        value={config.labelFontSize || 10}
+                                        disabled={!isAdmin}
+                                        onChange={(e) => {
+                                            const val = parseInt(e.target.value);
+                                            handleConfigChange('labelFontSize', val);
+                                        }}
+                                        className="flex-1 h-2 bg-blue-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                                    />
+                                    <span className="text-xs font-bold text-blue-900 w-8">{config.labelFontSize || 10}px</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        {/* QR Code */}
+                        {supportsQR && (
+                            <div className="bg-white p-3 rounded border border-gray-300 shadow-sm">
+                                <div className="flex justify-between items-center mb-2 border-b border-gray-200 pb-1">
+                                    <h4 className="font-bold text-black flex items-center gap-2"><QrCode size={14}/> Quick Response Code</h4>
+                                </div>
+                                {!qrCodeUrl ? (
+                                    <button onClick={() => generateQRCode(selectedItem)} className="w-full py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded border border-gray-300 text-xs transition-colors flex items-center justify-center gap-2"><QrCode size={14} /> Generate QR Code</button>
+                                ) : (
+                                    <div className="flex flex-col items-center gap-2">
+                                        <img src={qrCodeUrl} alt="Item QR Code" className="w-32 h-32 border border-gray-200 rounded p-1" />
+                                        <a href={qrCodeUrl} download={`QR-${selectedItem.label || selectedItem.id}.png`} className="w-full py-1.5 bg-brand-accent hover:bg-yellow-400 text-black font-bold rounded text-xs transition-colors flex items-center justify-center gap-2"><Download size={14} /> Download QR Image</a>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Rack Details */}
+                        {(selectedItem.type === 'rack' || selectedItem.type === 'open_cabin') && selectedItem.rackDetails && (
+                            <div className="space-y-4">
+                                <div className="bg-white p-3 rounded border border-gray-300 shadow-sm">
+                                        <div className="flex justify-between items-center mb-3 border-b border-gray-200 pb-1">
+                                            <h4 className="font-bold text-black flex items-center gap-2"><Activity size={14}/> Rack Configuration</h4>
+                                            <div className="flex gap-2">
+                                                <select value={selectedItem.rackDetails.status} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('status', e.target.value, true)} className="border border-gray-400 p-1 rounded font-bold uppercase text-[10px] tracking-wider text-black bg-white">
+                                                    <option value="available">Available</option>
+                                                    <option value="occupied">Occupied</option>
+                                                    <option value="reserved">Reserved</option>
+                                                </select>
+                                                <select value={selectedItem.rackDetails.enclosureType} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('enclosureType', e.target.value, true)} className="border border-gray-400 p-1 rounded bg-white text-black text-[10px] font-bold">
+                                                    <option value="Open Space">Open Space</option>
+                                                    <option value="Shuttered Warehouse">Shuttered</option>
+                                                    <option value="Close Cabin">Close Cabin</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Levels</label>
+                                                <input type="number" value={selectedItem.rackDetails.levels} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('levels', Number(e.target.value), true)} className="w-full border border-gray-400 p-1.5 rounded bg-white text-black text-xs" />
+                                            </div>
+                                            <div>
+                                                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Capacity (kg)</label>
+                                                <input type="number" value={selectedItem.rackDetails.capacityPerLevel} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('capacityPerLevel', Number(e.target.value), true)} className="w-full border border-gray-400 p-1.5 rounded bg-white text-black text-xs" />
+                                            </div>
+                                        </div>
+                                </div>
+
+                                {selectedItem.rackDetails.salesPerson && (
+                                    <div className="mb-3 p-2 bg-blue-50 border border-blue-100 rounded flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                            <User size={12} className="text-blue-500" />
+                                            <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider">Sales: {selectedItem.rackDetails.salesPerson}</span>
+                                        </div>
+                                        {isAdmin && (
+                                            <button 
+                                                onClick={() => {
+                                                    const newName = window.prompt("Update Sales Person Name:", selectedItem.rackDetails!.salesPerson);
+                                                    if (newName !== null) updateSelectedProperty('salesPerson', newName, true);
+                                                }}
+                                                className="text-[10px] text-blue-500 hover:underline font-bold"
+                                            >
+                                                Edit
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
 
                                 <div className="flex justify-between items-center mb-2">
                                     <h5 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Active Jobs ({selectedItem.rackDetails.jobs?.length || 0})</h5>
@@ -763,11 +985,69 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
                                         </div>
                                     ))}
                                 </div>
-                          </div>
-                      </div>
+                            </div>
+                        )}
+                      </>
                   )}
               </div>
               )}
+          </div>
+      )}
+
+      {/* --- Custom Sales Prompt Modal --- */}
+      {salesPrompt && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-md border-4 border-brand-primary overflow-hidden">
+                  <div className="p-4 bg-brand-primary text-white flex justify-between items-center border-b-4 border-brand-accent">
+                      <div className="flex items-center gap-2">
+                          <User size={20} className="text-brand-accent" />
+                          <h2 className="text-lg font-bold uppercase tracking-tight">Sales Person Required</h2>
+                      </div>
+                      <button onClick={() => setSalesPrompt(null)} className="p-1 hover:bg-white/10 rounded transition-colors">
+                          <X size={24} />
+                      </button>
+                  </div>
+                  <div className="p-6 space-y-4">
+                      <p className="text-sm text-gray-600 font-medium">
+                          Please enter the name of the Sales Person responsible for this {salesPrompt.value} rack.
+                      </p>
+                      <div className="relative">
+                          <User className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                          <input 
+                              type="text" 
+                              placeholder="Sales Person Name..." 
+                              className="w-full pl-10 pr-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-lg focus:border-brand-primary focus:ring-0 transition-all font-bold text-gray-800"
+                              value={salesPersonInput}
+                              onChange={(e) => setSalesPersonInput(e.target.value)}
+                              autoFocus
+                              onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && salesPersonInput.trim()) {
+                                      updateSelectedProperty(salesPrompt.field as any, salesPrompt.value, salesPrompt.isRackDetail, salesPersonInput);
+                                      setSalesPrompt(null);
+                                  }
+                              }}
+                          />
+                      </div>
+                      <div className="flex gap-3 pt-2">
+                          <button 
+                              onClick={() => setSalesPrompt(null)}
+                              className="flex-1 py-3 border-2 border-gray-200 text-gray-500 font-bold rounded-lg hover:bg-gray-50 transition-colors"
+                          >
+                              Cancel
+                          </button>
+                          <button 
+                              disabled={!salesPersonInput.trim()}
+                              onClick={() => {
+                                  updateSelectedProperty(salesPrompt.field as any, salesPrompt.value, salesPrompt.isRackDetail, salesPersonInput);
+                                  setSalesPrompt(null);
+                              }}
+                              className="flex-1 py-3 bg-brand-primary text-white font-bold rounded-lg hover:bg-black transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                              Confirm
+                          </button>
+                      </div>
+                  </div>
+              </div>
           </div>
       )}
 
@@ -811,7 +1091,7 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
                 <rect width={dimensions.length} height={dimensions.width} fill="url(#grid)" pointerEvents="none" />
 
                 {/* --- Render Items (Memoized) --- */}
-                <ItemsLayer items={items} selectedItemId={selectedItemId} onMouseDown={handleMouseDown} />
+                <ItemsLayer items={items} selectedItemIds={selectedItemIds} onMouseDown={handleMouseDown} labelFontSize={config.labelFontSize || 10} />
 
                 {/* --- Ghost Preview Item --- */}
                 {isAdmin && activeTool !== 'select' && hoverPos && (

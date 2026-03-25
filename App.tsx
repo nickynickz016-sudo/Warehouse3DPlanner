@@ -311,12 +311,6 @@ const App: React.FC = () => {
   if (isInitializing) {
       return (
           <div className="h-screen w-screen bg-brand-primary flex flex-col items-center justify-center text-white z-50">
-              <div className="h-24 w-24 relative animate-pulse">
-                <svg viewBox="0 0 100 100" className="w-full h-full drop-shadow-xl">
-                    <path d="M50 5 L95 50 L50 95 L5 50 Z" fill="#111" stroke="white" strokeWidth="2" />
-                    <path d="M50 5 L70 25 L50 95 L30 75 Z" fill="#FFCC00" />
-                </svg>
-              </div>
               <h1 className="text-3xl font-serif font-bold tracking-widest mt-6">WRITER</h1>
               <p className="text-sm font-sans font-bold text-brand-accent uppercase tracking-[0.3em] mb-8">RELOCATIONS</p>
               
@@ -341,16 +335,6 @@ const App: React.FC = () => {
       <header className="bg-brand-primary text-white h-16 flex items-center justify-between px-6 shadow-md z-30 shrink-0 border-b-2 border-brand-accent">
         <div className="flex items-center gap-6">
             <div className="flex items-center gap-3">
-                {/* Custom Logo Implementation */}
-                <div className="h-10 w-10 relative shrink-0">
-                    <svg viewBox="0 0 100 100" className="w-full h-full drop-shadow-md">
-                        {/* Diamond base */}
-                        <path d="M50 5 L95 50 L50 95 L5 50 Z" fill="#111" stroke="white" strokeWidth="2" />
-                        {/* Yellow Stripe Accent */}
-                        <path d="M50 5 L70 25 L50 95 L30 75 Z" fill="#FFCC00" />
-                        <path d="M50 5 L95 50 L80 65 L35 20 Z" fill="#333" opacity="0.3" />
-                    </svg>
-                </div>
                 <div className="hidden md:flex flex-col justify-center">
                     <h1 className="text-xl font-serif font-bold tracking-widest text-white leading-none">WRITER</h1>
                     <div className="flex items-center gap-2">
@@ -545,6 +529,7 @@ const App: React.FC = () => {
                         onUpdateItems={handleUpdateItems} 
                         activeLevelId={config.activeLevelId}
                         isAdmin={isAdmin}
+                        onUpdateConfig={handleUpdateConfig}
                     />
                 ) : (
                     <View3D config={config} />

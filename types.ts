@@ -31,6 +31,9 @@ export interface RackDetails {
   jobs: JobEntry[];
   volumeOccupied: number; // m3
   enclosureType: 'Open Space' | 'Shuttered Warehouse' | 'Close Cabin';
+  salesPerson?: string;
+  levels?: number;
+  capacityPerLevel?: number;
   // Legacy fields for compatibility during transition
   shipperName?: string;
   jobNumber?: string;
@@ -78,6 +81,7 @@ export interface WarehouseConfig {
   activeLevelId: string;
   mode: 'auto' | 'custom'; // Auto-generated vs Manual Edit
   pricePerCbm: number; // Selling point per CBM
+  labelFontSize: number; // Font size for labels in 2D view (px)
 }
 
 export interface StorageStats {

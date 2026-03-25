@@ -17,54 +17,16 @@ export const generateWarehouseReport = (config: WarehouseConfig) => {
 
   // --- Branding & Header Helper ---
   const drawHeader = (yOffset: number = 0) => {
-      // Logo Construction (Approximation of Writer Relocations Diamond)
-      const logoSize = 15;
-      const logoX = 15;
-      const logoY = 15 + yOffset;
-
-      // Black Diamond Base
-      doc.setFillColor(17, 17, 17); // #111
-      doc.triangle(
-          logoX, logoY + logoSize/2, 
-          logoX + logoSize/2, logoY, 
-          logoX + logoSize, logoY + logoSize/2
-      );
-      doc.triangle(
-          logoX, logoY + logoSize/2, 
-          logoX + logoSize/2, logoY + logoSize, 
-          logoX + logoSize, logoY + logoSize/2
-      );
-
-      // Yellow Accent Stripe
-      doc.setFillColor(255, 204, 0); // #FFCC00
-      doc.triangle(
-        logoX + logoSize/2, logoY,
-        logoX + logoSize * 0.7, logoY + logoSize * 0.2,
-        logoX + logoSize/2, logoY + logoSize
-      );
-
-      // Company Name
-      doc.setFont("times", "bold");
-      doc.setFontSize(18);
-      doc.setTextColor(50, 50, 50);
-      doc.text("WRITER", logoX + logoSize + 5, logoY + 8);
-      
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(8);
-      doc.setTextColor(200, 0, 0); // Red
-      doc.text("RELOCATIONS", logoX + logoSize + 5, logoY + 13);
-      
-      doc.setTextColor(100, 100, 100);
-      doc.text("PREMIUM LOGISTICS SERVICES", logoX + logoSize + 30, logoY + 13);
+      const headerY = 15 + yOffset;
 
       // Report Title
       doc.setFont("helvetica", "bold");
       doc.setFontSize(22);
       doc.setTextColor(30, 41, 59);
-      doc.text("Warehouse Inventory Report", pageWidth - 15, logoY + 10, { align: 'right' });
+      doc.text("Warehouse Inventory Report", 15, headerY + 10);
       
       doc.setDrawColor(200, 200, 200);
-      doc.line(15, logoY + 20, pageWidth - 15, logoY + 20);
+      doc.line(15, headerY + 20, pageWidth - 15, headerY + 20);
   };
 
   const drawFooter = (pageNumber: number) => {

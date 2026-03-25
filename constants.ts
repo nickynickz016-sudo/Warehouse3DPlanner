@@ -37,5 +37,6 @@ export const DEFAULT_CONFIG: WarehouseConfig = {
   ],
   activeLevelId: 'ground',
   mode: 'auto',
-  pricePerCbm: 25 // Default $25 per CBM
+  pricePerCbm: 25, // Default $25 per CBM
+  labelFontSize: 10
 };

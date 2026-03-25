@@ -30,7 +30,8 @@ const JobSearch: React.FC<Props> = ({ config, onClose }) => {
                 if (item.rackDetails?.jobs) {
                     item.rackDetails.jobs.forEach(job => {
                         if (job.jobNumber.toLowerCase().includes(term.toLowerCase()) || 
-                            job.shipperName.toLowerCase().includes(term.toLowerCase())) {
+                            job.shipperName.toLowerCase().includes(term.toLowerCase()) ||
+                            (item.rackDetails?.salesPerson && item.rackDetails.salesPerson.toLowerCase().includes(term.toLowerCase()))) {
                             found.push({ job, item, levelName: level.name });
                         }
                     });
@@ -111,6 +112,13 @@ const JobSearch: React.FC<Props> = ({ config, onClose }) => {
                                             <div>
                                                 <p className="text-[10px] font-bold uppercase text-gray-400">Financials</p>
                                                 <p className="font-bold">{res.job.pricePerMonth} AED / {res.job.paymentCycle}</p>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-2 text-gray-600">
+                                            <User size={16} className="text-brand-accent" />
+                                            <div>
+                                                <p className="text-[10px] font-bold uppercase text-gray-400">Sales Person</p>
+                                                <p className="font-bold">{res.item.rackDetails?.salesPerson || 'N/A'}</p>
                                             </div>
                                         </div>
                                     </div>

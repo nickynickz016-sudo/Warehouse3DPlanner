@@ -227,6 +227,30 @@ const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizin
             </div>
         </section>
 
+        {/* Visual Settings */}
+        <section className="bg-blue-50 p-3 rounded-lg border border-blue-200">
+             <h3 className="text-sm font-semibold text-blue-900 uppercase tracking-wider mb-3 flex items-center gap-2">
+                <Ruler size={16} className="text-blue-600" /> Visual Settings
+            </h3>
+            <div>
+                <label className="block text-xs font-bold text-blue-800 mb-1">Label Font Size (px)</label>
+                <div className="flex items-center gap-3">
+                    <input 
+                        type="range" 
+                        min="6" 
+                        max="24" 
+                        step="1"
+                        value={config.labelFontSize || 10}
+                        disabled={!isAdmin}
+                        onChange={(e) => handleChange('labelFontSize', e.target.value)}
+                        className="flex-1 h-2 bg-blue-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                    />
+                    <span className="text-sm font-bold text-blue-900 w-8">{config.labelFontSize || 10}px</span>
+                </div>
+                <p className="text-[10px] text-blue-600 mt-1">Adjust label size for better visibility on 2D view.</p>
+            </div>
+        </section>
+
         {/* Dimensions Section */}
         <section>
             <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-3 flex items-center gap-2">
