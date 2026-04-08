@@ -14,11 +14,17 @@ export interface ZoneSizes {
   dispatch: number; // m2
 }
 
+export interface PackageHistoryEvent {
+  status: 'in' | 'out';
+  timestamp: string;
+}
+
 export interface PackageRecord {
   number: number;
   status: 'in' | 'out' | 'none';
-  inTimestamp?: string;
-  outTimestamp?: string;
+  inTimestamp?: string; // Legacy
+  outTimestamp?: string; // Legacy
+  history: PackageHistoryEvent[];
 }
 
 export interface JobEntry {
@@ -28,6 +34,7 @@ export interface JobEntry {
   inDate: string;
   outDate: string;
   pricePerMonth: number;
+  cbm: number;
   paymentCycle: 'Monthly' | 'Quarterly' | 'Yearly';
   status: 'active' | 'completed' | 'pending';
   notes?: string;

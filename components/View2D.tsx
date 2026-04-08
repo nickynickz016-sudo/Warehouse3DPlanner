@@ -1,12 +1,14 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import QRCode from 'qrcode';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { WarehouseConfig, LayoutItem, RackDetails, JobEntry, PackageRecord } from '../types';
 import { PALLET_WIDTH, PALLET_DEPTH } from '../constants';
 import { 
     Move, Grid, Square, Box, 
     DoorOpen, Wind, Video, Footprints, Droplet, Flame,
     X, User, FileText, Activity, RotateCw, AlignJustify, Warehouse, DollarSign, Calendar, Calculator, Database, Shield, Lock, Monitor, Scan, QrCode, Download, Factory, ZoomIn, ZoomOut, Maximize, Minimize, Copy, Minus,
-    Plus, Trash2, Clock
+    Plus, Trash2, Clock, FileDown
 } from 'lucide-react';
 
 interface Props {
@@ -299,7 +301,22 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
   // Package Management State
   const [activePackageJobId, setActivePackageJobId] = useState<string | null>(null);
   const [packageSearch, setPackageSearch] = useState('');
+  const [bulkStart, setBulkStart] = useState('');
+  const [bulkEnd, setBulkEnd] = useState('');
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState('');
+  const [expandedPackageHistory, setExpandedPackageHistory] = useState<number | null>(null);
   
+  const closePackageModal = () => {
+      setActivePackageJobId(null);
+      setPackageSearch('');
+      setBulkStart('');
+      setBulkEnd('');
+      setShowResetConfirm(false);
+      setResetConfirmText('');
+      setExpandedPackageHistory(null);
+  };
+
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -583,6 +600,7 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
           inDate: new Date().toISOString().split('T')[0],
           outDate: '',
           pricePerMonth: 0,
+          cbm: 0,
           paymentCycle: 'Monthly',
           status: 'active'
       };
@@ -633,7 +651,7 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
       onUpdateItems(activeLevelId, updatedItems);
   };
 
-  const updatePackageStatus = (jobId: string, packageNumber: number, status: 'in' | 'out' | 'none') => {
+   const updatePackageStatus = (jobId: string, packageNumber: number, status: 'in' | 'out' | 'none') => {
       if (selectedItemIds.length === 0 || !isAdmin) return;
       const now = new Date().toLocaleString();
       const updatedItems: LayoutItem[] = items.map(item => {
@@ -646,12 +664,18 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
                       let updatedPackages = [...currentPackages];
                       
                       const existingRecord = existingPackageIdx >= 0 ? currentPackages[existingPackageIdx] : null;
+                      const history = existingRecord?.history || [];
                       
+                      const newHistory = status !== 'none' 
+                        ? [...history, { status: status as 'in' | 'out', timestamp: now }]
+                        : history;
+
                       const newRecord: PackageRecord = {
                           number: packageNumber,
                           status,
                           inTimestamp: status === 'in' ? now : existingRecord?.inTimestamp,
-                          outTimestamp: status === 'out' ? now : existingRecord?.outTimestamp
+                          outTimestamp: status === 'out' ? now : existingRecord?.outTimestamp,
+                          history: newHistory
                       };
 
                       if (existingPackageIdx >= 0) {
@@ -659,6 +683,7 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
                       } else {
                           updatedPackages.push(newRecord);
                       }
+
                       return { ...job, packages: updatedPackages };
                   }
                   return job;
@@ -668,6 +693,137 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
           return item;
       });
       onUpdateItems(activeLevelId, updatedItems);
+  };
+
+  const resetPackages = (jobId: string) => {
+      if (selectedItemIds.length === 0 || !isAdmin) return;
+      const updatedItems: LayoutItem[] = items.map(item => {
+          if (selectedItemIds.includes(item.id) && (item.type === 'rack' || item.type === 'open_cabin')) {
+              const currentJobs = item.rackDetails?.jobs || [];
+              const updatedJobs = currentJobs.map(job => {
+                  if (job.id === jobId) {
+                      return { ...job, packages: [] };
+                  }
+                  return job;
+              });
+              return { ...item, rackDetails: { ...item.rackDetails!, jobs: updatedJobs } };
+          }
+          return item;
+      });
+      onUpdateItems(activeLevelId, updatedItems);
+  };
+
+  const bulkUpdatePackages = (jobId: string, status: 'in' | 'out') => {
+      if (selectedItemIds.length === 0 || !isAdmin) return;
+      const start = parseInt(bulkStart);
+      const end = parseInt(bulkEnd);
+      
+      if (isNaN(start) || isNaN(end) || start < 1 || end > 10000 || start > end) {
+          return;
+      }
+
+      const now = new Date().toLocaleString();
+      const updatedItems: LayoutItem[] = items.map(item => {
+          if (selectedItemIds.includes(item.id) && (item.type === 'rack' || item.type === 'open_cabin')) {
+              const currentJobs = item.rackDetails?.jobs || [];
+              const updatedJobs = currentJobs.map(job => {
+                  if (job.id === jobId) {
+                      const currentPackages = [...(job.packages || [])];
+                      const packageMap = new Map(currentPackages.map(p => [p.number, p]));
+
+                      for (let i = start; i <= end; i++) {
+                          const existing = packageMap.get(i);
+                          const history = existing?.history || [];
+                          const newHistory = [...history, { status, timestamp: now }];
+                          
+                          const newRecord: PackageRecord = {
+                              number: i,
+                              status,
+                              inTimestamp: status === 'in' ? now : existing?.inTimestamp,
+                              outTimestamp: status === 'out' ? now : existing?.outTimestamp,
+                              history: newHistory
+                          };
+                          packageMap.set(i, newRecord);
+                      }
+
+                      return { ...job, packages: Array.from(packageMap.values()) };
+                  }
+                  return job;
+              });
+              return { ...item, rackDetails: { ...item.rackDetails!, jobs: updatedJobs } };
+          }
+          return item;
+      });
+      onUpdateItems(activeLevelId, updatedItems);
+      setBulkStart('');
+      setBulkEnd('');
+  };
+
+  const generateJobArchivePDF = (job: JobEntry) => {
+      const doc = new jsPDF();
+      
+      // Header
+      doc.setFontSize(20);
+      doc.text('Job Archive Report', 14, 22);
+      doc.setFontSize(11);
+      doc.setTextColor(100);
+      doc.text(`Generated on: ${new Date().toLocaleString()}`, 14, 30);
+      
+      // Job Details Table
+      autoTable(doc, {
+          startY: 40,
+          head: [['Field', 'Value']],
+          body: [
+              ['Job Number', `AE${job.jobNumber}`],
+              ['Shipper Name', job.shipperName],
+              ['Price (AED/mo)', job.pricePerMonth.toString()],
+              ['CBM', (job.cbm || 0).toString()],
+              ['Cycle', job.paymentCycle],
+              ['Date IN', job.inDate],
+              ['Date OUT', job.outDate || 'N/A'],
+              ['Total Packages', (job.packages?.length || 0).toString()],
+          ],
+          theme: 'striped',
+          headStyles: { fillColor: [255, 204, 0], textColor: [0, 0, 0] },
+      });
+
+      // Package History Table
+      if (job.packages && job.packages.length > 0) {
+          doc.setFontSize(14);
+          doc.text('Package Activity History', 14, (doc as any).lastAutoTable.finalY + 15);
+          
+          const historyData: any[] = [];
+          job.packages.forEach(pkg => {
+              if (pkg.history && pkg.history.length > 0) {
+                  pkg.history.forEach(event => {
+                      historyData.push([
+                          pkg.number,
+                          event.status.toUpperCase(),
+                          event.timestamp
+                      ]);
+                  });
+              } else {
+                  // Fallback for legacy data
+                  if (pkg.inTimestamp) historyData.push([pkg.number, 'IN (Legacy)', pkg.inTimestamp]);
+                  if (pkg.outTimestamp) historyData.push([pkg.number, 'OUT (Legacy)', pkg.outTimestamp]);
+              }
+          });
+
+          if (historyData.length > 0) {
+              autoTable(doc, {
+                  startY: (doc as any).lastAutoTable.finalY + 20,
+                  head: [['Package #', 'Status', 'Timestamp']],
+                  body: historyData.sort((a, b) => a[0] - b[0]), // Sort by package number
+                  theme: 'grid',
+                  headStyles: { fillColor: [50, 50, 50], textColor: [255, 255, 255] },
+              });
+          } else {
+              doc.setFontSize(10);
+              doc.text('No activity history recorded for these packages.', 14, (doc as any).lastAutoTable.finalY + 25);
+          }
+      }
+
+      doc.save(`Job_Archive_AE${job.jobNumber}_${job.shipperName}.pdf`);
   };
 
   const generateQRCode = async (item: LayoutItem) => {
@@ -946,12 +1102,22 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
                                     {selectedItem.rackDetails.jobs?.map((job, idx) => (
                                         <div key={job.id} className="p-3 border border-gray-200 rounded-md bg-gray-50 relative group">
                                             {isAdmin && (
-                                                <button 
-                                                    onClick={() => removeJobFromSelected(job.id)}
-                                                    className="absolute top-2 right-2 text-gray-400 hover:text-red-500 transition-colors"
-                                                >
-                                                    <Trash2 size={14}/>
-                                                </button>
+                                                <div className="absolute top-2 right-2 flex gap-2">
+                                                    <button 
+                                                        onClick={() => generateJobArchivePDF(job)}
+                                                        className="text-gray-400 hover:text-blue-500 transition-colors"
+                                                        title="Save Archive PDF"
+                                                    >
+                                                        <FileDown size={14}/>
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => removeJobFromSelected(job.id)}
+                                                        className="text-gray-400 hover:text-red-500 transition-colors"
+                                                        title="Delete Job"
+                                                    >
+                                                        <Trash2 size={14}/>
+                                                    </button>
+                                                </div>
                                             )}
                                             <div className="grid grid-cols-2 gap-3">
                                                 <div className="col-span-2">
@@ -987,6 +1153,18 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
                                                         disabled={!isAdmin} 
                                                         onChange={(e) => updateJobInSelected(job.id, 'pricePerMonth', Number(e.target.value))} 
                                                         className="w-full border border-gray-400 p-1.5 rounded bg-white text-black text-xs" 
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">CBM</label>
+                                                    <input 
+                                                        type="number" 
+                                                        value={job.cbm || 0} 
+                                                        disabled={!isAdmin} 
+                                                        onChange={(e) => updateJobInSelected(job.id, 'cbm', Number(e.target.value))} 
+                                                        className="w-full border border-gray-400 p-1.5 rounded bg-white text-black text-xs" 
+                                                        placeholder="0.00"
+                                                        step="0.01"
                                                     />
                                                 </div>
                                                 <div>
@@ -1026,7 +1204,7 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
                                                     onClick={() => setActivePackageJobId(job.id)}
                                                     className="col-span-2 mt-2 flex items-center justify-center gap-2 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-[10px] font-bold uppercase tracking-wider"
                                                 >
-                                                    <Box size={14} /> Manage Packages (1-500)
+                                                    <Box size={14} /> Manage Packages (1-10,000)
                                                 </button>
                                             </div>
                                         </div>
@@ -1060,7 +1238,7 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
                                   <p className="text-[10px] font-bold text-blue-200 uppercase tracking-widest mt-1">Job: {job.jobNumber} | Shipper: {job.shipperName}</p>
                               </div>
                           </div>
-                          <button onClick={() => setActivePackageJobId(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+                          <button onClick={closePackageModal} className="p-2 hover:bg-white/10 rounded-full transition-colors">
                               <X size={24} />
                           </button>
                       </div>
@@ -1069,7 +1247,7 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
                           <div className="flex-1 min-w-[200px] relative">
                               <input 
                                   type="text" 
-                                  placeholder="Search Package Number (1-500)..." 
+                                  placeholder="Search Package Number (1-10,000)..." 
                                   className="w-full pl-10 pr-4 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:ring-0 transition-all font-bold text-gray-700"
                                   value={packageSearch}
                                   onChange={(e) => setPackageSearch(e.target.value)}
@@ -1083,22 +1261,100 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
                           </div>
                       </div>
 
+                      <div className="p-4 bg-white border-b border-gray-200 flex flex-wrap items-center gap-4 shrink-0">
+                          <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-black uppercase text-gray-400">Bulk Action:</span>
+                              <input 
+                                  type="number" 
+                                  placeholder="From" 
+                                  className="w-20 px-2 py-1 border-2 border-gray-200 rounded text-xs font-bold focus:border-blue-500 outline-none"
+                                  value={bulkStart}
+                                  onChange={(e) => setBulkStart(e.target.value)}
+                              />
+                              <span className="text-gray-400">-</span>
+                              <input 
+                                  type="number" 
+                                  placeholder="To" 
+                                  className="w-20 px-2 py-1 border-2 border-gray-200 rounded text-xs font-bold focus:border-blue-500 outline-none"
+                                  value={bulkEnd}
+                                  onChange={(e) => setBulkEnd(e.target.value)}
+                              />
+                              <button 
+                                  onClick={() => bulkUpdatePackages(job.id, 'in')}
+                                  className="px-3 py-1 bg-green-600 text-white text-[10px] font-bold rounded hover:bg-green-700 transition-colors uppercase"
+                              >
+                                  Mark IN
+                              </button>
+                              <button 
+                                  onClick={() => bulkUpdatePackages(job.id, 'out')}
+                                  className="px-3 py-1 bg-red-600 text-white text-[10px] font-bold rounded hover:bg-red-700 transition-colors uppercase"
+                              >
+                                  Mark OUT
+                              </button>
+                          </div>
+                          <div className="ml-auto flex items-center gap-2">
+                              {showResetConfirm ? (
+                                  <div className="flex items-center gap-2 bg-red-50 p-1 rounded border border-red-200">
+                                      <input 
+                                          type="text" 
+                                          placeholder="Type 'reset'..." 
+                                          className="w-24 px-2 py-1 border border-red-300 rounded text-[10px] font-bold outline-none"
+                                          value={resetConfirmText}
+                                          onChange={(e) => setResetConfirmText(e.target.value)}
+                                          autoFocus
+                                      />
+                                      <button 
+                                          onClick={() => {
+                                              if (resetConfirmText === 'reset') {
+                                                  resetPackages(job.id);
+                                                  setShowResetConfirm(false);
+                                                  setResetConfirmText('');
+                                              }
+                                          }}
+                                          className="px-2 py-1 bg-red-600 text-white text-[10px] font-bold rounded hover:bg-red-700"
+                                      >
+                                          Confirm
+                                      </button>
+                                      <button 
+                                          onClick={() => {
+                                              setShowResetConfirm(false);
+                                              setResetConfirmText('');
+                                          }}
+                                          className="text-gray-400 hover:text-gray-600"
+                                      >
+                                          <X size={14} />
+                                      </button>
+                                  </div>
+                              ) : (
+                                  <button 
+                                      onClick={() => setShowResetConfirm(true)}
+                                      className="flex items-center gap-1 px-3 py-1 border-2 border-red-200 text-red-600 text-[10px] font-bold rounded hover:bg-red-50 transition-colors uppercase"
+                                  >
+                                      <RotateCw size={12} /> Reset All
+                                  </button>
+                              )}
+                          </div>
+                      </div>
+
                       <div className="flex-1 overflow-y-auto p-4 custom-scrollbar bg-gray-100">
-                          <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-12 gap-2">
-                              {Array.from({ length: 500 }, (_, i) => i + 1)
+                          <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-12 gap-2 pt-10 pb-10">
+                              {Array.from({ length: 10000 }, (_, i) => i + 1)
                                   .filter(num => !packageSearch || num.toString().includes(packageSearch))
                                   .map(num => {
                                       const record = packageMap.get(num);
                                       const status = record?.status || 'none';
+                                      const history = record?.history || [];
+                                      const latestHistory = [...history].reverse().slice(0, 2);
                                       
                                       return (
                                           <div 
                                               key={num}
                                               className={`
-                                                  relative group aspect-square flex flex-col items-center justify-center rounded-lg border-2 transition-all cursor-pointer
+                                                  relative group aspect-square flex flex-col items-center justify-center rounded-lg border-2 transition-all cursor-pointer hover:z-50
                                                   ${status === 'none' ? 'bg-white border-gray-200 hover:border-blue-300' : ''}
                                                   ${status === 'in' ? 'bg-green-50 border-green-500 text-green-700' : ''}
                                                   ${status === 'out' ? 'bg-red-50 border-red-500 text-red-700' : ''}
+                                                  ${expandedPackageHistory === num ? 'ring-4 ring-blue-400 z-[100]' : ''}
                                               `}
                                               onClick={() => {
                                                   const nextStatus = status === 'none' ? 'in' : (status === 'in' ? 'out' : 'none');
@@ -1108,11 +1364,49 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
                                               <span className="text-sm font-black">{num}</span>
                                               <span className="text-[8px] font-bold uppercase opacity-60">{status}</span>
                                               
-                                              {/* Tooltip on hover */}
-                                              {(record?.inTimestamp || record?.outTimestamp) && (
-                                                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 bg-gray-900 text-white p-2 rounded shadow-xl text-[8px] font-mono opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
-                                                      {record.inTimestamp && <div className="text-green-400">IN: {record.inTimestamp}</div>}
-                                                      {record.outTimestamp && <div className="text-red-400">OUT: {record.outTimestamp}</div>}
+                                              {/* History Toggle Button */}
+                                              {history.length > 0 && (
+                                                  <button 
+                                                      onClick={(e) => {
+                                                          e.stopPropagation();
+                                                          setExpandedPackageHistory(expandedPackageHistory === num ? null : num);
+                                                      }}
+                                                      className="absolute top-0 right-0 p-0.5 bg-gray-100 rounded-bl text-gray-500 hover:bg-blue-500 hover:text-white transition-colors"
+                                                  >
+                                                      <Clock size={8} />
+                                                  </button>
+                                              )}
+
+                                              {/* Tooltip on hover (2 latest) */}
+                                              {latestHistory.length > 0 && expandedPackageHistory !== num && (
+                                                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 bg-gray-900 text-white p-2 rounded shadow-xl text-[8px] font-mono opacity-0 invisible group-hover:opacity-100 group-hover:visible pointer-events-none transition-all z-[100]">
+                                                      <div className="font-bold text-blue-400 mb-1 uppercase tracking-widest">Latest Activity:</div>
+                                                      {latestHistory.map((h, i) => (
+                                                          <div key={i} className={h.status === 'in' ? 'text-green-400' : 'text-red-400'}>
+                                                              {h.status.toUpperCase()}: {h.timestamp}
+                                                          </div>
+                                                      ))}
+                                                      {history.length > 2 && <div className="text-gray-400 mt-1 italic">Click clock for full history ({history.length})</div>}
+                                                  </div>
+                                              )}
+
+                                              {/* Expanded History Modal/Overlay */}
+                                              {expandedPackageHistory === num && (
+                                                  <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-64 bg-white border-2 border-blue-500 rounded-lg shadow-2xl p-3 z-[110] cursor-default" onClick={e => e.stopPropagation()}>
+                                                      <div className="flex justify-between items-center mb-2 border-b pb-1">
+                                                          <span className="text-xs font-black text-blue-600 uppercase">Package {num} History</span>
+                                                          <button onClick={() => setExpandedPackageHistory(null)} className="text-gray-400 hover:text-red-500">
+                                                              <X size={14} />
+                                                          </button>
+                                                      </div>
+                                                      <div className="max-h-48 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+                                                          {[...history].reverse().map((h, i) => (
+                                                              <div key={i} className={`flex justify-between items-center p-1.5 rounded text-[9px] font-bold ${h.status === 'in' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                                                                  <span className="uppercase">{h.status}</span>
+                                                                  <span className="font-mono text-gray-500">{h.timestamp}</span>
+                                                              </div>
+                                                          ))}
+                                                      </div>
                                                   </div>
                                               )}
                                           </div>
@@ -1123,12 +1417,12 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
                       
                       <div className="p-4 bg-white border-t border-gray-200 flex justify-between items-center shrink-0">
                           <div className="text-xs font-bold text-gray-500">
-                              Total Packages: 500 | 
+                              Total Packages: 10,000 | 
                               <span className="text-green-600 ml-2">IN: {packages.filter(p => p.status === 'in').length}</span> | 
                               <span className="text-red-600 ml-2">OUT: {packages.filter(p => p.status === 'out').length}</span>
                           </div>
                           <button 
-                              onClick={() => setActivePackageJobId(null)}
+                              onClick={closePackageModal}
                               className="px-8 py-2 bg-gray-900 text-white font-bold rounded-lg hover:bg-black transition-colors uppercase tracking-widest text-xs"
                           >
                               Done
