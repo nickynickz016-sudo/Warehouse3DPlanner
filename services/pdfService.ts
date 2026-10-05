@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { WarehouseConfig, LayoutItem } from '../types';
+import { WarehouseConfig, LayoutItem, JobEntry } from '../types';
 
 // Helper to calculate volume of an item in m3
 const getItemVolumeCapacity = (item: LayoutItem, levelHeight: number): number => {
@@ -162,4 +162,123 @@ export const generateWarehouseReport = (config: WarehouseConfig) => {
   }
 
   doc.save(`${config.name.replace(/\s+/g, '_')}_Report.pdf`);
+};
+
+export const generateShipperPassport = (job: JobEntry, warehouseName: string) => {
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.width;
+    const pageHeight = doc.internal.pageSize.height;
+
+    // --- Header ---
+    doc.setFillColor(17, 17, 17);
+    doc.rect(0, 0, pageWidth, 40, 'F');
+    
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(24);
+    doc.setTextColor(255, 204, 0); // brand-accent
+    doc.text("SHIPPER PASSPORT", 15, 25);
+    
+    doc.setFontSize(10);
+    doc.setTextColor(255, 255, 255);
+    doc.text(warehouseName.toUpperCase(), 15, 33);
+    doc.text(`REF: AE-${job.jobNumber}`, pageWidth - 15, 25, { align: 'right' });
+    doc.text(`PRINTED: ${new Date().toLocaleString()}`, pageWidth - 15, 33, { align: 'right' });
+
+    let currentY = 55;
+
+    // --- Shipper Information ---
+    doc.setFontSize(14);
+    doc.setTextColor(30, 41, 59);
+    doc.text("1. Shipper Details", 15, currentY);
+    doc.setDrawColor(226, 232, 240);
+    doc.line(15, currentY + 2, pageWidth - 15, currentY + 2);
+    
+    currentY += 12;
+    
+    autoTable(doc, {
+        startY: currentY,
+        body: [
+            ['Shipper Name', job.shipperName],
+            ['Job Number', `AE-${job.jobNumber}`],
+            ['In Date', job.inDate || '-'],
+            ['Out Date', job.outDate || '-'],
+            ['Storage Type', job.storageType || '-'],
+            ['Billing Cycle', job.paymentCycle || '-'],
+            ['Unit Price', `${(job.pricePerMonth || 0).toFixed(2)} AED`],
+            ['Volume Used', `${(job.cbm || 0).toFixed(2)} m³`],
+            ['Status', (job.status || 'Active').toUpperCase()]
+        ],
+        theme: 'plain',
+        styles: { fontSize: 10, cellPadding: 3 },
+        columnStyles: { 0: { fontStyle: 'bold', textColor: [100, 100, 100], cellWidth: 40 } },
+        margin: { left: 15 }
+    });
+
+    currentY = (doc as any).lastAutoTable.finalY + 20;
+
+    // --- Package Inventory ---
+    doc.setFontSize(14);
+    doc.setTextColor(30, 41, 59);
+    doc.text("2. Package Manifest & Movement History", 15, currentY);
+    doc.line(15, currentY + 2, pageWidth - 15, currentY + 2);
+    
+    currentY += 10;
+
+    if (!job.packages || job.packages.length === 0) {
+        doc.setFontSize(10);
+        doc.setFont("helvetica", "italic");
+        doc.text("No specific package tracking data available for this shipper.", 15, currentY);
+    } else {
+        const histories = job.packages.flatMap(p => 
+            (p.history || []).map(h => [
+                `PKG #${p.number}`,
+                h.status === 'in' ? 'MOVEMENT IN' : 'MOVEMENT OUT',
+                h.timestamp
+            ])
+        ).sort((a, b) => new Date(b[2]).getTime() - new Date(a[2]).getTime());
+
+        autoTable(doc, {
+            startY: currentY,
+            head: [['Package ID', 'Event Type', 'Timestamp']],
+            body: histories,
+            theme: 'striped',
+            headStyles: { fillColor: [17, 17, 17], textColor: [255, 204, 0] },
+            styles: { fontSize: 9 },
+            margin: { left: 15 }
+        });
+    }
+
+    // --- Authorization / Archive Note ---
+    const finalY = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 30 : currentY + 30;
+    
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(0, 0, 0);
+    doc.text("Archive Certification", 15, finalY);
+    
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(100, 100, 100);
+    doc.text(
+        "This document serves as the final record for the shipper mentioned above. All storage obligations \nhave been recorded according to the warehouse management system logs.", 
+        15, 
+        finalY + 6,
+        { lineHeightFactor: 1.5 }
+    );
+    
+    // Signature lines
+    doc.line(15, finalY + 40, 80, finalY + 40);
+    doc.text("Warehouse Supervisor Signature", 15, finalY + 45);
+    
+    doc.line(pageWidth - 80, finalY + 40, pageWidth - 15, finalY + 40);
+    doc.text("Shipper Representative Signature", pageWidth - 15, finalY + 45, { align: 'right' });
+
+    // Footer
+    const footerY = pageHeight - 15;
+    doc.setDrawColor(200, 200, 200);
+    doc.line(15, footerY - 5, pageWidth - 15, footerY - 5);
+    doc.setFontSize(7);
+    doc.text(`Official Archive Record - Writer Warehouse Planner Pro - ${new Date().toLocaleDateString()}`, pageWidth / 2, footerY, { align: 'center' });
+
+    doc.save(`PASSPORT_AE_${job.jobNumber}_${job.shipperName.replace(/\s+/g, '_')}.pdf`);
 };

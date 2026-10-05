@@ -1,7 +1,7 @@
-import React from 'react';
-import { WarehouseConfig, Level } from '../types';
-import { calculateDimensionsFromArea } from '../services/warehouseLogic';
-import { Settings, Truck, Box, Ruler, Thermometer, Layers, Plus, Trash2, Database, Eye, Check, Lock, DollarSign, TrendingUp, Edit2, Eraser, Save } from 'lucide-react';
+import React, { useState } from 'react';
+import { WarehouseConfig, Level, StorageStats, GeminiOptimizationResult, BRANCH_MAP, BRANCH_LIST, BranchCode, StorageType, ForkliftType } from '../types';
+import { calculateDimensionsFromArea, getLevelOccupiedCbm } from '../services/warehouseLogic';
+import { Settings, Truck, Box, Ruler, Thermometer, Layers, Plus, Trash2, Database, Eye, Check, Lock, Coins, TrendingUp, Edit2, Eraser, Save, BarChart3, ChevronDown, ChevronUp, Package, Maximize, Sparkles, Building2, Globe, Warehouse } from 'lucide-react';
 
 interface Props {
   config: WarehouseConfig;
@@ -10,9 +10,14 @@ interface Props {
   isOptimizing: boolean;
   isAdmin: boolean;
   onSave: () => void;
+  stats: StorageStats;
+  aiResult: GeminiOptimizationResult | null;
+  isStatsOpen: boolean;
+  onToggleStats: () => void;
 }
 
-const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizing, isAdmin, onSave }) => {
+const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizing, isAdmin, onSave, stats, aiResult, isStatsOpen, onToggleStats }) => {
+  const currency = config.branch ? (BRANCH_MAP[config.branch]?.currency || 'AED') : 'AED';
 
   const handleChange = (field: keyof WarehouseConfig | string, value: any) => {
     if (!isAdmin) return;
@@ -25,13 +30,15 @@ const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizin
         const { length, width } = calculateDimensionsFromArea(Number(value));
         newConfig.dimensions.length = length;
         newConfig.dimensions.width = width;
-      } else {
+      } else if (field === 'length' || field === 'width') {
         // Recalculate area in m2 (cm * cm / 10000)
         newConfig.dimensions.totalArea = Math.round((newConfig.dimensions.length * newConfig.dimensions.width) / 10000);
       }
     } else if (field.startsWith('zones.')) {
         const zoneKey = field.split('.')[1] as keyof typeof config.zones;
         newConfig.zones = { ...newConfig.zones, [zoneKey]: Number(value) };
+    } else if (field === 'docks' || field === 'aisleWidth' || field === 'columnSpacing' || field === 'pricePerCbm' || field === 'labelFontSize') {
+      (newConfig as any)[field] = Number(value);
     } else {
       (newConfig as any)[field] = value;
     }
@@ -64,14 +71,20 @@ const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizin
     onChange(newConfig);
   };
 
+  const [confirmClearLevelId, setConfirmClearLevelId] = useState<string | null>(null);
+
   const clearLevelItems = (id: string) => {
       if (!isAdmin) return;
-      if (window.confirm("Are you sure you want to clear all items in this level?")) {
+      if (confirmClearLevelId === id) {
           const newLevels = config.levels.map(l => {
               if (l.id === id) return { ...l, items: [] };
               return l;
           });
           onChange({ ...config, levels: newLevels, mode: 'custom' });
+          setConfirmClearLevelId(null);
+      } else {
+          setConfirmClearLevelId(id);
+          setTimeout(() => setConfirmClearLevelId(null), 3500);
       }
   };
 
@@ -110,30 +123,110 @@ const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizin
 
       <div className="p-5 space-y-6">
         
-        {/* Warehouse Name */}
-        <section>
-            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Project Name</label>
-            <div className="relative">
-                <input 
-                    type="text" 
-                    value={config.name}
+        {/* Warehouse Name & Branch */}
+        <section className="space-y-3">
+            <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Project Name</label>
+                <div className="relative">
+                    <input 
+                        type="text" 
+                        value={config.name}
+                        disabled={!isAdmin}
+                        onChange={(e) => handleChange('name', e.target.value)}
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-accent focus:ring-brand-accent text-sm border p-2 pr-8 font-bold text-gray-800 disabled:bg-gray-100"
+                    />
+                    <Edit2 size={14} className="absolute right-2 top-2.5 text-gray-400" />
+                </div>
+            </div>
+
+            <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1 flex items-center gap-1.5">
+                    <Globe size={13} className="text-brand-primary" /> Operating Branch
+                </label>
+                <select
+                    value={config.branch || 'UAE'}
                     disabled={!isAdmin}
-                    onChange={(e) => handleChange('name', e.target.value)}
-                    className="block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-accent focus:ring-brand-accent text-sm border p-2 pr-8 font-bold text-gray-800 disabled:bg-gray-100"
-                />
-                <Edit2 size={14} className="absolute right-2 top-2.5 text-gray-400" />
+                    onChange={(e) => handleChange('branch', e.target.value)}
+                    className="block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-accent focus:ring-brand-accent text-sm border p-2 font-bold text-gray-800 bg-white disabled:bg-gray-100"
+                >
+                    {BRANCH_LIST.map(b => (
+                        <option key={b.code} value={b.code}>
+                            {b.flag} {b.name} ({b.currency})
+                        </option>
+                    ))}
+                </select>
             </div>
         </section>
 
-        {/* Financials - NEW (AED) */}
+        {/* Warehouse Metrics Toggle Section */}
+        <section className="border border-brand-accent/30 rounded-lg overflow-hidden bg-white shadow-sm">
+            <button 
+                onClick={onToggleStats}
+                className={`w-full p-3 flex items-center justify-between transition-colors ${isStatsOpen ? 'bg-brand-primary text-white' : 'bg-brand-accent/10 text-brand-primary hover:bg-brand-accent/20'}`}
+            >
+                <div className="flex items-center gap-2">
+                    <BarChart3 size={18} />
+                    <span className="text-sm font-bold uppercase tracking-wider">Warehouse Metrics</span>
+                </div>
+                {isStatsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+            
+            {isStatsOpen && (
+                <div className="p-4 space-y-4 bg-white animate-in slide-in-from-top duration-200">
+                    <div className="grid grid-cols-2 gap-3">
+                        <div className="bg-gray-50 p-2 rounded border border-gray-200 text-center">
+                            <Package size={14} className="mx-auto mb-1 text-gray-400" />
+                            <p className="text-[10px] text-gray-500 font-bold uppercase">Pallets</p>
+                            <p className="text-sm font-black text-gray-800">{stats.palletPositions.toLocaleString()}</p>
+                        </div>
+                        <div className="bg-blue-50 p-2 rounded border border-blue-100 text-center">
+                            <Maximize size={14} className="mx-auto mb-1 text-blue-400" />
+                            <p className="text-[10px] text-blue-500 font-bold uppercase">Volume</p>
+                            <p className="text-sm font-black text-blue-800">{(stats.cubicVolume / 1000000).toFixed(1)} m³</p>
+                        </div>
+                        <div className="bg-green-50 p-2 rounded border border-green-100 text-center col-span-2">
+                            <div className="flex justify-between items-center px-1">
+                                <div className="text-left">
+                                    <p className="text-[10px] text-green-600 font-bold uppercase">Current Load</p>
+                                    <p className="text-sm font-black text-green-800">{stats.occupiedVolume.toLocaleString()} m³</p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-[10px] text-gray-400 font-bold uppercase">Utility</p>
+                                    <p className="text-sm font-black text-brand-primary">
+                                        {Math.round((stats.occupiedVolume / (stats.cubicVolume / 1000000)) * 100 || 0)}%
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="bg-brand-primary/5 p-3 rounded border border-brand-primary/10">
+                        <div className="flex justify-between items-center mb-1">
+                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-tighter">Est. Monthly Revenue</span>
+                            <Coins size={12} className="text-green-600" />
+                        </div>
+                        <p className="text-lg font-black text-brand-primary">
+                            {currency} {(stats.occupiedVolume * (config.pricePerCbm || 0)).toLocaleString()}
+                        </p>
+                        {aiResult?.potentialRevenue && (
+                            <div className="mt-2 text-[9px] bg-green-100 text-green-800 p-1 rounded border border-green-200 font-bold flex items-center gap-1">
+                                <Sparkles size={10} /> AI Max Potential: {aiResult.potentialRevenue}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+        </section>
+
+        {/* Financials */}
         <section className="bg-yellow-50 p-3 rounded-lg border border-yellow-200">
              <h3 className="text-sm font-semibold text-black uppercase tracking-wider mb-3 flex items-center gap-2">
-                <DollarSign size={16} className="text-brand-accent fill-black" /> Financial Goals
+                <Coins size={16} className="text-brand-accent fill-black" /> Financial Goals
             </h3>
             <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">Target Price per CBM (AED)</label>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Target Price per CBM ({currency})</label>
                 <div className="relative">
-                    <span className="absolute left-3 top-2 text-sm text-gray-500 font-bold">AED</span>
+                    <span className="absolute left-3 top-2 text-sm text-gray-500 font-bold">{currency}</span>
                     <input 
                         type="number" 
                         value={config.pricePerCbm}
@@ -170,10 +263,10 @@ const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizin
                                     {isAdmin && (
                                         <button 
                                             onClick={() => clearLevelItems(level.id)} 
-                                            title="Clear All Items in Level"
-                                            className="text-gray-400 hover:text-orange-500 p-1"
+                                            title={confirmClearLevelId === level.id ? "Click again to confirm clear" : "Clear All Items in Level"}
+                                            className={`p-1 rounded text-xs transition-all flex items-center gap-1 ${confirmClearLevelId === level.id ? 'bg-red-500 text-white font-bold px-2 py-0.5' : 'text-gray-400 hover:text-orange-500'}`}
                                         >
-                                            <Eraser size={14} />
+                                            {confirmClearLevelId === level.id ? 'Clear Items?' : <Eraser size={14} />}
                                         </button>
                                     )}
                                     {config.levels.length > 1 && isAdmin && (
@@ -184,15 +277,25 @@ const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizin
                                 </div>
                             </div>
                             
-                            <div className="grid grid-cols-2 gap-2 mt-1">
-                                <div className="col-span-2">
+                            <div className="grid grid-cols-3 gap-2 mt-1">
+                                <div className="col-span-3">
                                     <input 
                                         type="text" 
                                         value={level.name} 
                                         disabled={!isAdmin}
                                         onChange={(e) => updateLevel(level.id, 'name', e.target.value)}
-                                        className="text-xs border rounded p-1.5 w-full font-medium disabled:bg-gray-100 disabled:text-gray-500"
+                                        className="text-xs border rounded p-1.5 w-full font-medium disabled:bg-gray-100 disabled:text-gray-500 font-bold"
                                         placeholder="Floor Name"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-[9px] text-gray-500 uppercase font-bold">Elev (cm)</label>
+                                    <input 
+                                        type="number" 
+                                        value={level.elevation || 0} 
+                                        disabled={!isAdmin}
+                                        onChange={(e) => updateLevel(level.id, 'elevation', Number(e.target.value))}
+                                        className="text-xs border rounded p-1 w-full disabled:bg-gray-100 disabled:text-gray-500 font-medium"
                                     />
                                 </div>
                                 <div>
@@ -202,11 +305,11 @@ const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizin
                                         value={level.height} 
                                         disabled={!isAdmin}
                                         onChange={(e) => updateLevel(level.id, 'height', Number(e.target.value))}
-                                        className="text-xs border rounded p-1 w-full disabled:bg-gray-100 disabled:text-gray-500"
+                                        className="text-xs border rounded p-1 w-full disabled:bg-gray-100 disabled:text-gray-500 font-medium"
                                     />
                                 </div>
                                 <div>
-                                    <label className="text-[9px] text-gray-500 uppercase font-bold flex items-center gap-1"><Database size={8}/> Cap (m³)</label>
+                                    <label className="text-[9px] text-gray-500 uppercase font-bold flex items-center gap-0.5"><Database size={8}/> Cap (m³)</label>
                                     <input 
                                         type="number" 
                                         value={level.totalVolumeCapacity || 0} 
@@ -215,6 +318,29 @@ const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizin
                                         className="text-xs border rounded p-1 w-full bg-yellow-50 text-yellow-800 font-bold border-yellow-200 disabled:opacity-70"
                                     />
                                 </div>
+                            </div>
+                            
+                            {/* Occupancy Progress */}
+                            <div className="mt-2 text-[10px]">
+                                {(() => {
+                                    const occupied = getLevelOccupiedCbm(level);
+                                    const capacity = level.totalVolumeCapacity || 0;
+                                    const percent = capacity > 0 ? (occupied / capacity) * 100 : 0;
+                                    return (
+                                        <>
+                                            <div className="flex justify-between font-bold mb-1">
+                                                <span className="text-gray-500 uppercase tracking-tighter">Current Load:</span>
+                                                <span className={percent > 90 ? 'text-red-600' : 'text-brand-primary'}>{occupied} m³ / {capacity} m³</span>
+                                            </div>
+                                            <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+                                                <div 
+                                                    className={`h-1.5 rounded-full transition-all duration-300 ${percent > 90 ? 'bg-red-500' : 'bg-brand-primary'}`} 
+                                                    style={{ width: `${Math.min(100, percent)}%` }}
+                                                ></div>
+                                            </div>
+                                        </>
+                                    );
+                                })()}
                             </div>
                         </div>
                     );
@@ -264,7 +390,17 @@ const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizin
                         value={config.dimensions.totalArea}
                         disabled={!isAdmin}
                         onChange={(e) => handleChange('totalArea', e.target.value)}
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-accent focus:ring-brand-accent sm:text-sm border p-2 bg-gray-50 disabled:text-gray-500"
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-accent focus:ring-brand-accent sm:text-sm border p-2 bg-gray-50 disabled:text-gray-500 font-bold"
+                    />
+                </div>
+                <div>
+                    <label className="block text-xs font-medium text-gray-700">Clear Height (cm)</label>
+                    <input 
+                        type="number" 
+                        value={config.dimensions.height || 700}
+                        disabled={!isAdmin}
+                        onChange={(e) => handleChange('height', e.target.value)}
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-accent focus:ring-brand-accent sm:text-sm border p-2 disabled:bg-gray-100 disabled:text-gray-500 font-bold"
                     />
                 </div>
                 <div>
@@ -274,7 +410,7 @@ const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizin
                         value={config.dimensions.length}
                         disabled={!isAdmin}
                         onChange={(e) => handleChange('length', e.target.value)}
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-accent focus:ring-brand-accent sm:text-sm border p-2 disabled:bg-gray-100 disabled:text-gray-500"
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-accent focus:ring-brand-accent sm:text-sm border p-2 disabled:bg-gray-100 disabled:text-gray-500 font-bold"
                     />
                 </div>
                 <div>
@@ -284,33 +420,85 @@ const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizin
                         value={config.dimensions.width}
                         disabled={!isAdmin}
                         onChange={(e) => handleChange('width', e.target.value)}
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-accent focus:ring-brand-accent sm:text-sm border p-2 disabled:bg-gray-100 disabled:text-gray-500"
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-accent focus:ring-brand-accent sm:text-sm border p-2 disabled:bg-gray-100 disabled:text-gray-500 font-bold"
                     />
                 </div>
             </div>
         </section>
 
-        {/* Storage Config */}
+        {/* Storage & Equipment Config */}
         <section>
             <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-3 flex items-center gap-2">
-                <Box size={16} className="text-brand-primary" /> Storage Configuration
+                <Box size={16} className="text-brand-primary" /> Storage & Equipment
             </h3>
             <div className="space-y-3">
-                <div>
-                    <label className="block text-xs font-medium text-gray-700">Storage Type</label>
-                    <select 
-                        value={config.storageType}
-                        disabled={!isAdmin}
-                        onChange={(e) => handleChange('storageType', e.target.value)}
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-accent focus:ring-brand-accent sm:text-sm border p-2 disabled:bg-gray-100 disabled:text-gray-500"
-                    >
-                        <option>Pallet Racking</option>
-                        <option>Fine Arts Racking</option>
-                        <option>Bulk Storage</option>
-                        <option>Mezzanine</option>
-                    </select>
+                <div className="grid grid-cols-2 gap-3">
+                    <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Storage Type</label>
+                        <select 
+                            value={config.storageType}
+                            disabled={!isAdmin}
+                            onChange={(e) => handleChange('storageType', e.target.value)}
+                            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-accent focus:ring-brand-accent sm:text-sm border p-2 disabled:bg-gray-100 disabled:text-gray-500 font-bold"
+                        >
+                            <option value="Pallet Racking">Pallet Racking</option>
+                            <option value="Fine Arts Racking">Fine Arts Racking</option>
+                            <option value="Bulk Storage">Bulk Storage</option>
+                            <option value="Mezzanine">Mezzanine</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1 flex items-center gap-1">
+                            <Truck size={12} /> Forklift Equipment
+                        </label>
+                        <select 
+                            value={config.forklift || 'Reach Truck'}
+                            disabled={!isAdmin}
+                            onChange={(e) => handleChange('forklift', e.target.value)}
+                            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-accent focus:ring-brand-accent sm:text-sm border p-2 disabled:bg-gray-100 disabled:text-gray-500 font-bold"
+                        >
+                            <option value="Counterbalance">Counterbalance</option>
+                            <option value="Reach Truck">Reach Truck</option>
+                            <option value="VNA">VNA (Very Narrow)</option>
+                        </select>
+                    </div>
                 </div>
-                <div className="flex items-center gap-2">
+
+                <div className="grid grid-cols-3 gap-2">
+                    <div>
+                        <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Aisle (cm)</label>
+                        <input 
+                            type="number" 
+                            value={config.aisleWidth}
+                            disabled={!isAdmin}
+                            onChange={(e) => handleChange('aisleWidth', e.target.value)}
+                            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-accent focus:ring-brand-accent text-xs border p-2 disabled:bg-gray-100 font-bold"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Columns (cm)</label>
+                        <input 
+                            type="number" 
+                            value={config.columnSpacing || 600}
+                            disabled={!isAdmin}
+                            onChange={(e) => handleChange('columnSpacing', e.target.value)}
+                            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-accent focus:ring-brand-accent text-xs border p-2 disabled:bg-gray-100 font-bold"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Docks / Bays</label>
+                        <input 
+                            type="number" 
+                            value={config.docks || 1}
+                            disabled={!isAdmin}
+                            onChange={(e) => handleChange('docks', e.target.value)}
+                            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-accent focus:ring-brand-accent text-xs border p-2 disabled:bg-gray-100 font-bold"
+                        />
+                    </div>
+                </div>
+
+                <div className="flex items-center gap-2 pt-1">
                      <input 
                         type="checkbox"
                         checked={config.temperatureControlled}
@@ -318,18 +506,47 @@ const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizin
                         onChange={(e) => handleChange('temperatureControlled', e.target.checked)}
                         className="h-4 w-4 text-brand-accent border-gray-300 rounded focus:ring-brand-accent text-yellow-500 disabled:opacity-50"
                      />
-                     <label className="text-xs font-medium text-gray-700 flex items-center gap-1">
-                        <Thermometer size={12} /> Temperature Controlled
+                     <label className="text-xs font-bold text-gray-700 flex items-center gap-1">
+                        <Thermometer size={14} className="text-blue-500" /> Temperature Controlled Facility
                      </label>
                 </div>
-                 <div>
-                    <label className="block text-xs font-medium text-gray-700">Aisle Width (cm)</label>
+            </div>
+        </section>
+
+        {/* Dedicated Operational Zones */}
+        <section className="bg-gray-50 p-3 rounded-lg border border-gray-200">
+            <h3 className="text-xs font-black text-gray-700 uppercase tracking-wider mb-2 flex items-center gap-2">
+                <Warehouse size={14} className="text-brand-primary" /> Dedicated Zones (m²)
+            </h3>
+            <div className="grid grid-cols-3 gap-2">
+                <div>
+                    <label className="block text-[9px] font-bold text-gray-500 uppercase mb-1">Office</label>
                     <input 
                         type="number" 
-                        value={config.aisleWidth}
+                        value={config.zones?.office || 0}
                         disabled={!isAdmin}
-                        onChange={(e) => handleChange('aisleWidth', e.target.value)}
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-accent focus:ring-brand-accent sm:text-sm border p-2 disabled:bg-gray-100 disabled:text-gray-500"
+                        onChange={(e) => handleChange('zones.office', e.target.value)}
+                        className="w-full text-xs border rounded p-1.5 font-bold text-gray-800 disabled:bg-gray-100"
+                    />
+                </div>
+                <div>
+                    <label className="block text-[9px] font-bold text-gray-500 uppercase mb-1">Receiving</label>
+                    <input 
+                        type="number" 
+                        value={config.zones?.receiving || 0}
+                        disabled={!isAdmin}
+                        onChange={(e) => handleChange('zones.receiving', e.target.value)}
+                        className="w-full text-xs border rounded p-1.5 font-bold text-gray-800 disabled:bg-gray-100"
+                    />
+                </div>
+                <div>
+                    <label className="block text-[9px] font-bold text-gray-500 uppercase mb-1">Dispatch</label>
+                    <input 
+                        type="number" 
+                        value={config.zones?.dispatch || 0}
+                        disabled={!isAdmin}
+                        onChange={(e) => handleChange('zones.dispatch', e.target.value)}
+                        className="w-full text-xs border rounded p-1.5 font-bold text-gray-800 disabled:bg-gray-100"
                     />
                 </div>
             </div>

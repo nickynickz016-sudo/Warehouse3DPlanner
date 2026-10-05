@@ -8,6 +8,7 @@ export const RACK_HEIGHT_PER_LEVEL = 150; // cm
 export const DEFAULT_CONFIG: WarehouseConfig = {
   id: 'wh-main',
   name: 'Main Warehouse',
+  branch: 'UAE',
   dimensions: {
     length: 2800, // cm (~28m)
     width: 1200,  // cm (~12m)
@@ -39,4 +40,32 @@ export const DEFAULT_CONFIG: WarehouseConfig = {
   mode: 'auto',
   pricePerCbm: 25, // Default $25 per CBM
   labelFontSize: 10
+};
+
+export const DEFAULT_QATAR_CONFIG: WarehouseConfig = {
+  ...DEFAULT_CONFIG,
+  id: 'wh-qatar-main',
+  name: 'Doha Central Hub',
+  branch: 'QATAR',
+  levels: [
+    {
+      ...DEFAULT_CONFIG.levels[0],
+      id: 'level-qatar-ground',
+      items: []
+    }
+  ]
+};
+
+export const DEFAULT_KSA_CONFIG: WarehouseConfig = {
+  ...DEFAULT_CONFIG,
+  id: 'wh-ksa-main',
+  name: 'Riyadh Logistics Facility',
+  branch: 'KSA',
+  levels: [
+    {
+      ...DEFAULT_CONFIG.levels[0],
+      id: 'level-ksa-ground',
+      items: []
+    }
+  ]
 };

@@ -2,13 +2,14 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import QRCode from 'qrcode';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { WarehouseConfig, LayoutItem, RackDetails, JobEntry, PackageRecord } from '../types';
+import { WarehouseConfig, LayoutItem, RackDetails, JobEntry, PackageRecord, BRANCH_MAP } from '../types';
 import { PALLET_WIDTH, PALLET_DEPTH } from '../constants';
+import { getLevelOccupiedCbm } from '../services/warehouseLogic';
 import { 
     Move, Grid, Square, Box, 
     DoorOpen, Wind, Video, Footprints, Droplet, Flame,
-    X, User, FileText, Activity, RotateCw, AlignJustify, Warehouse, DollarSign, Calendar, Calculator, Database, Shield, Lock, Monitor, Scan, QrCode, Download, Factory, ZoomIn, ZoomOut, Maximize, Minimize, Copy, Minus,
-    Plus, Trash2, Clock, FileDown
+    X, User, FileText, Activity, RotateCw, AlignJustify, Warehouse, Coins, Calendar, Calculator, Database, Shield, Lock, Monitor, Scan, QrCode, Download, Factory, ZoomIn, ZoomOut, Maximize, Minimize, Copy, Minus,
+    Plus, Trash2, Clock, FileDown, Package
 } from 'lucide-react';
 
 interface Props {
@@ -17,9 +18,12 @@ interface Props {
   activeLevelId: string;
   isAdmin: boolean;
   onUpdateConfig?: (newConfig: WarehouseConfig) => void;
+  selectedItemIds: string[];
+  onSelectionChange: (ids: string[]) => void;
+  onDeleteSelected?: () => void;
 }
 
-type Tool = 'select' | 'rack' | 'office' | 'obstacle' | 'passageway' | 'fire_exit' | 'washroom' | 'entrance' | 'camera' | 'ac' | 'stairs' | 'store' | 'open_cabin' | 'open_space_storage' | 'warehouse';
+type Tool = 'select' | 'rack' | 'office' | 'obstacle' | 'passageway' | 'fire_exit' | 'washroom' | 'entrance' | 'camera' | 'ac' | 'stairs' | 'store' | 'open_cabin' | 'open_space_storage' | 'warehouse' | 'temp_storage';
 
 // --- Helper: Default Dimensions & Properties for Tools ---
 const getItemDefaults = (tool: Tool): Partial<LayoutItem> => {
@@ -41,6 +45,12 @@ const getItemDefaults = (tool: Tool): Partial<LayoutItem> => {
             rackDetails: {
                 status: 'available', jobs: [],
                 volumeOccupied: 0, enclosureType: 'Close Cabin'
+            }
+        };
+        case 'temp_storage': return { ...defaults, width: 120, height: 120, depth: 100, label: 'TEMP_S', color: '#99f6e4',
+            rackDetails: {
+                status: 'available', jobs: [],
+                volumeOccupied: 0, enclosureType: 'Open Space'
             }
         };
         case 'open_space_storage': return { ...defaults, width: 400, height: 400, depth: 200, label: 'OPEN AREA', color: '#fed7aa' };
@@ -146,6 +156,21 @@ const renderItemVisuals = (item: LayoutItem, isSelected: boolean) => {
                     <line x1={item.width} y1={0} x2={0} y2={item.height} stroke={strokeColor} strokeWidth="1" opacity="0.2" />
                 </g>
             );
+        case 'temp_storage':
+            const tStatus = item.rackDetails?.status || 'available';
+            let tFill = item.color;
+            if (tStatus === 'occupied') tFill = '#fee2e2';
+            else if (tStatus === 'reserved') tFill = '#ffedd5';
+            return (
+                <g>
+                    <rect x={0} y={0} width={item.width} height={item.height} fill={tFill} stroke={isSelected ? '#ef4444' : '#0d9488'} strokeWidth={isSelected ? 5 : 2} />
+                    <rect x={item.width*0.2} y={item.width*0.2} width={item.width*0.6} height={item.height*0.6} fill="none" stroke="#0d9488" strokeWidth="1" />
+                    <line x1={0} y1={0} x2={item.width} y2={item.height} stroke="#0d9488" strokeWidth="1" opacity="0.4" />
+                    <line x1={item.width} y1={0} x2={0} y2={item.height} stroke="#0d9488" strokeWidth="1" opacity="0.4" />
+                    {tStatus === 'occupied' && <circle cx={item.width-15} cy={15} r={8} fill="red" />}
+                    {tStatus === 'reserved' && <circle cx={item.width-15} cy={15} r={8} fill="orange" />}
+                </g>
+            );
         case 'store':
                 return (
                 <g>
@@ -189,7 +214,7 @@ const renderItemVisuals = (item: LayoutItem, isSelected: boolean) => {
 };
 
 // --- Component: Items Layer (Memoized for Performance) ---
-const ItemsLayer = React.memo(({ items, selectedItemIds, onMouseDown, labelFontSize }: { items: LayoutItem[], selectedItemIds: string[], onMouseDown: (e: any, id: string) => void, labelFontSize: number }) => {
+const ItemsLayer = React.memo(({ items, selectedItemIds, onMouseDown, labelFontSize, jobPrefix }: { items: LayoutItem[], selectedItemIds: string[], onMouseDown: (e: any, id: string) => void, labelFontSize: number, jobPrefix: string }) => {
     return (
         <>
             {items.map((item) => {
@@ -203,8 +228,24 @@ const ItemsLayer = React.memo(({ items, selectedItemIds, onMouseDown, labelFontS
                     >
                         {renderItemVisuals(item, isSelected)}
                         
+                        {/* High visibility blue highlight for selected items */}
+                        {isSelected && (
+                            <rect 
+                                x={-4} 
+                                y={-4} 
+                                width={item.width + 8} 
+                                height={item.height + 8} 
+                                fill="rgba(37, 99, 235, 0.15)" 
+                                stroke="#2563eb" 
+                                strokeWidth={3} 
+                                strokeDasharray="6,4" 
+                                rx={4} 
+                                pointerEvents="none" 
+                            />
+                        )}
+                        
                         {/* Labels & Details Layer */}
-                        {(item.type === 'rack' || item.type === 'open_cabin') ? (
+                        {(item.type === 'rack' || item.type === 'open_cabin' || item.type === 'temp_storage') ? (
                             <foreignObject 
                                 x={5} 
                                 y={5} 
@@ -219,10 +260,16 @@ const ItemsLayer = React.memo(({ items, selectedItemIds, onMouseDown, labelFontS
                                         style={{ fontSize: `${labelFontSize}px` }}
                                     >
                                         {item.rackDetails?.jobs && item.rackDetails.jobs.length > 0 
-                                            ? (item.rackDetails.jobs.length === 1 ? item.rackDetails.jobs[0].shipperName : `${item.rackDetails.jobs.length} Jobs`)
-                                            : (item.rackDetails?.shipperName || item.label || '')}
+                                            ? (item.rackDetails.jobs.length === 1 
+                                                ? (item.rackDetails.jobs[0].shipperName 
+                                                    || (item.rackDetails.jobs[0].jobNumber ? `${jobPrefix}${item.rackDetails.jobs[0].jobNumber}` : '')
+                                                    || (item.rackDetails.status === 'occupied' ? `${item.label || 'Unit'} [Job]` : (item.label || ''))) 
+                                                : `${item.rackDetails.jobs.length} Jobs`)
+                                            : (item.rackDetails?.shipperName 
+                                                || (item.rackDetails?.jobNumber ? `${jobPrefix}${item.rackDetails.jobNumber}` : '')
+                                                || (item.rackDetails?.status === 'occupied' ? `${item.label || 'Unit'} [Occupied]` : (item.label || '')))}
                                     </span>
-                                    {item.type === 'rack' && item.rackDetails?.salesPerson && (
+                                    {(item.type === 'rack' || item.type === 'temp_storage') && item.rackDetails?.salesPerson && (
                                         <span 
                                             className="text-blue-700 font-bold mt-1 truncate w-full"
                                             style={{ fontSize: `${Math.max(6, labelFontSize - 2)}px` }}
@@ -265,67 +312,68 @@ const ItemsLayer = React.memo(({ items, selectedItemIds, onMouseDown, labelFontS
 });
 
 
-const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin, onUpdateConfig }) => {
+const View2D: React.FC<Props> = ({ 
+  config, onUpdateItems, activeLevelId, isAdmin, onUpdateConfig,
+  selectedItemIds, onSelectionChange, onDeleteSelected 
+}) => {
   const { dimensions } = config;
   const activeLevel = config.levels.find(l => l.id === activeLevelId);
   const items = activeLevel?.items || [];
   
   const levelVolumeCapacity = activeLevel?.totalVolumeCapacity || 0;
-  const usedVolume = items.reduce((sum, item) => sum + (item.rackDetails?.volumeOccupied || 0), 0);
-  const remainingVolume = levelVolumeCapacity - usedVolume;
+  const usedVolume = activeLevel ? getLevelOccupiedCbm(activeLevel) : 0;
+  const remainingVolume = Math.round((levelVolumeCapacity - usedVolume) * 100) / 100;
   const volumePercentage = levelVolumeCapacity > 0 ? (usedVolume / levelVolumeCapacity) * 100 : 0;
 
   const [activeTool, setActiveTool] = useState<Tool>('select');
   const [isDragging, setIsDragging] = useState(false);
-  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
+  const setSelectedItemIds = (ids: string[]) => onSelectionChange(ids);
   const [dragOffsets, setDragOffsets] = useState<Map<string, { x: number, y: number }>>(new Map());
-  const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
+
+  // Category counts for quick selection
+  const cabinCount = useMemo(() => items.filter(i => i.type === 'open_cabin').length, [items]);
+  const officeCount = useMemo(() => items.filter(i => i.type === 'office').length, [items]);
+  const rackCount = useMemo(() => items.filter(i => i.type === 'rack').length, [items]);
+
+  // Selected item breakdown summary
+  const selectedBreakdown = useMemo(() => {
+    const selItems = items.filter(i => selectedItemIds.includes(i.id));
+    const cabins = selItems.filter(i => i.type === 'open_cabin').length;
+    const offices = selItems.filter(i => i.type === 'office').length;
+    const racks = selItems.filter(i => i.type === 'rack').length;
+    const others = selItems.length - cabins - offices - racks;
+    const parts: string[] = [];
+    if (cabins > 0) parts.push(`${cabins} ${cabins === 1 ? 'Cabin' : 'Cabins'}`);
+    if (offices > 0) parts.push(`${offices} ${offices === 1 ? 'Office' : 'Offices'}`);
+    if (racks > 0) parts.push(`${racks} ${racks === 1 ? 'Rack' : 'Racks'}`);
+    if (others > 0) parts.push(`${others} other`);
+    return parts.join(', ');
+  }, [items, selectedItemIds]);
+
+  const executeDeleteSelected = () => {
+    if (selectedItemIds.length === 0 || !isAdmin) return;
+    if (onDeleteSelected) {
+      onDeleteSelected();
+    } else {
+      const remainingItems = items.filter(item => !selectedItemIds.includes(item.id));
+      onUpdateItems(activeLevelId, remainingItems);
+      setSelectedItemIds([]);
+    }
+  };
+
+  // Marquee / Box Selection State
+  const [selectionBox, setSelectionBox] = useState<{ startX: number, startY: number, currentX: number, currentY: number } | null>(null);
+  const [isSelectingBox, setIsSelectingBox] = useState(false);
+  const [initialSelectedOnBoxStart, setInitialSelectedOnBoxStart] = useState<string[]>([]);
   
   // Hover state for Ghost Preview
   const [hoverPos, setHoverPos] = useState<{x: number, y: number} | null>(null);
   
   // Zoom State
   const [zoom, setZoom] = useState(0.4);
-  const [isPropertiesMinimized, setIsPropertiesMinimized] = useState(false);
-  const [isPropertiesExpanded, setIsPropertiesExpanded] = useState(false);
   
-  // Draggable Properties Panel State
-  const [panelPos, setPanelPos] = useState({ x: 16, y: 16 }); // top, right
-  const [isDraggingPanel, setIsDraggingPanel] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-
-  // Custom Sales Prompt State
-  const [salesPrompt, setSalesPrompt] = useState<{field: string, value: any, isRackDetail: boolean} | null>(null);
-  const [salesPersonInput, setSalesPersonInput] = useState('');
-  
-  // Package Management State
-  const [activePackageJobId, setActivePackageJobId] = useState<string | null>(null);
-  const [packageSearch, setPackageSearch] = useState('');
-  const [bulkStart, setBulkStart] = useState('');
-  const [bulkEnd, setBulkEnd] = useState('');
-  const [showResetConfirm, setShowResetConfirm] = useState(false);
-  const [resetConfirmText, setResetConfirmText] = useState('');
-  const [expandedPackageHistory, setExpandedPackageHistory] = useState<number | null>(null);
-  
-  const closePackageModal = () => {
-      setActivePackageJobId(null);
-      setPackageSearch('');
-      setBulkStart('');
-      setBulkEnd('');
-      setShowResetConfirm(false);
-      setResetConfirmText('');
-      setExpandedPackageHistory(null);
-  };
-
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-
-  // Reset minimize state when selecting a new item
-  useEffect(() => {
-    if (selectedItemIds.length > 0) {
-        setIsPropertiesMinimized(false);
-    }
-  }, [selectedItemIds]);
 
   const getMousePos = (evt: React.MouseEvent | React.TouchEvent) => {
     if (!svgRef.current) return { x: 0, y: 0 };
@@ -351,35 +399,59 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
   const handleZoomOut = () => setZoom(prev => Math.max(prev - 0.2, 0.4));
   const handleResetZoom = () => setZoom(1);
 
-  // Keyboard controls for fine-tuning position
+  // Keyboard controls for fine-tuning position and instant single-press deletion
   useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
-          if (selectedItemIds.length === 0 || !isAdmin) return;
-          
-          // Avoid moving items when typing in input fields
+          // Avoid triggering when typing in input fields or textareas
           if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA' || document.activeElement?.tagName === 'SELECT') return;
 
-          const step = e.shiftKey ? 10 : 1;
-          let dx = 0;
-          let dy = 0;
-
-          switch (e.key) {
-              case 'ArrowUp': dy = -step; break;
-              case 'ArrowDown': dy = step; break;
-              case 'ArrowLeft': dx = -step; break;
-              case 'ArrowRight': dx = step; break;
-              default: return;
+          // Single press Delete / Backspace to instantly delete all selected cabins, offices, racks, or any items
+          if (e.key === 'Delete' || e.key === 'Backspace') {
+              if (selectedItemIds.length === 0 || !isAdmin) return;
+              e.preventDefault();
+              e.stopPropagation();
+              executeDeleteSelected();
+              return;
           }
 
-          e.preventDefault();
+          // Ctrl+A / Cmd+A to select all items on current level
+          if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+              e.preventDefault();
+              setSelectedItemIds(items.map(i => i.id));
+              return;
+          }
 
-          const updatedItems = items.map(item => {
-              if (selectedItemIds.includes(item.id)) {
-                  return { ...item, x: Math.round(item.x + dx), y: Math.round(item.y + dy) };
+          // Escape to deselect all
+          if (e.key === 'Escape') {
+              e.preventDefault();
+              setSelectedItemIds([]);
+              return;
+          }
+
+          // Arrow keys to nudge items
+          if (selectedItemIds.length > 0 && isAdmin) {
+              const step = e.shiftKey ? 10 : 1;
+              let dx = 0;
+              let dy = 0;
+
+              switch (e.key) {
+                  case 'ArrowUp': dy = -step; break;
+                  case 'ArrowDown': dy = step; break;
+                  case 'ArrowLeft': dx = -step; break;
+                  case 'ArrowRight': dx = step; break;
+                  default: return;
               }
-              return item;
-          });
-          onUpdateItems(activeLevelId, updatedItems);
+
+              e.preventDefault();
+
+              const updatedItems = items.map(item => {
+                  if (selectedItemIds.includes(item.id)) {
+                      return { ...item, x: Math.round(item.x + dx), y: Math.round(item.y + dy) };
+                  }
+                  return item;
+              });
+              onUpdateItems(activeLevelId, updatedItems);
+          }
       };
 
       window.addEventListener('keydown', handleKeyDown);
@@ -389,9 +461,8 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
   const handleMouseDown = (e: React.MouseEvent | React.TouchEvent, itemId?: string) => {
       e.stopPropagation();
       const pos = getMousePos(e);
-      setQrCodeUrl(null);
 
-      const isShiftPressed = (e as React.MouseEvent).shiftKey;
+      const isShiftPressed = ('shiftKey' in e) && Boolean((e as React.MouseEvent).shiftKey);
 
       if (activeTool === 'select' || !isAdmin) {
           if (itemId) {
@@ -424,7 +495,19 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
                   setDragOffsets(newOffsets);
               }
           } else {
-              setSelectedItemIds([]);
+              // Clicked on empty canvas -> Start Marquee Rubberband Box Selection
+              setIsSelectingBox(true);
+              const initial = isShiftPressed ? [...selectedItemIds] : [];
+              setInitialSelectedOnBoxStart(initial);
+              setSelectionBox({
+                  startX: pos.x,
+                  startY: pos.y,
+                  currentX: pos.x,
+                  currentY: pos.y
+              });
+              if (!isShiftPressed) {
+                  setSelectedItemIds([]);
+              }
           }
       } else if (isAdmin) {
           // Centered addition
@@ -436,6 +519,35 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
       const pos = getMousePos(e);
       // Update Ghost Position
       setHoverPos(pos);
+
+      // Box/Marquee selection dragging
+      if (isSelectingBox && selectionBox) {
+          e.preventDefault();
+          const currentBox = {
+              ...selectionBox,
+              currentX: pos.x,
+              currentY: pos.y
+          };
+          setSelectionBox(currentBox);
+
+          const minX = Math.min(currentBox.startX, currentBox.currentX);
+          const maxX = Math.max(currentBox.startX, currentBox.currentX);
+          const minY = Math.min(currentBox.startY, currentBox.currentY);
+          const maxY = Math.max(currentBox.startY, currentBox.currentY);
+
+          // Find all items whose bounding box intersects with the marquee box
+          const intersectedIds = items.filter(item => {
+              const itemMinX = item.x;
+              const itemMaxX = item.x + item.width;
+              const itemMinY = item.y;
+              const itemMaxY = item.y + item.height;
+              return itemMinX < maxX && itemMaxX > minX && itemMinY < maxY && itemMaxY > minY;
+          }).map(i => i.id);
+
+          const combined = Array.from(new Set([...initialSelectedOnBoxStart, ...intersectedIds]));
+          setSelectedItemIds(combined);
+          return;
+      }
 
       if (isDragging && (activeTool === 'select') && isAdmin) {
           e.preventDefault();
@@ -458,10 +570,18 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
   };
 
   const handleMouseUp = () => {
+      if (isSelectingBox) {
+          setIsSelectingBox(false);
+          setSelectionBox(null);
+      }
       setIsDragging(false);
   };
   
   const handleMouseLeave = () => {
+      if (isSelectingBox) {
+          setIsSelectingBox(false);
+          setSelectionBox(null);
+      }
       setHoverPos(null);
       setIsDragging(false);
   };
@@ -490,352 +610,7 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
       setSelectedItemIds([newItem.id]);
   };
 
-  const duplicateItem = (id?: string) => {
-      if (!isAdmin) return;
-      
-      const idsToClone = id ? (selectedItemIds.includes(id) ? selectedItemIds : [id]) : selectedItemIds;
-      if (idsToClone.length === 0) return;
-      
-      const newItems: LayoutItem[] = [];
-      const newIds: string[] = [];
-
-      idsToClone.forEach(cloneId => {
-          const itemToClone = items.find(i => i.id === cloneId);
-          if (!itemToClone) return;
-
-          const newId = `${itemToClone.type}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
-          const newItem: LayoutItem = {
-              ...itemToClone,
-              id: newId,
-              x: itemToClone.x + 20, // Offset slightly
-              y: itemToClone.y + 20,
-              label: itemToClone.label ? `${itemToClone.label} (Copy)` : ''
-          };
-          newItems.push(newItem);
-          newIds.push(newId);
-      });
-
-      onUpdateItems(activeLevelId, [...items, ...newItems]);
-      setSelectedItemIds(newIds);
-  };
-
-  const deleteItem = (id?: string) => {
-      if (!isAdmin) return;
-      const idsToDelete = id ? (selectedItemIds.includes(id) ? selectedItemIds : [id]) : selectedItemIds;
-      if (idsToDelete.length === 0) return;
-      onUpdateItems(activeLevelId, items.filter(i => !idsToDelete.includes(i.id)));
-      setSelectedItemIds([]);
-  };
-
-  const updateSelectedProperty = (field: keyof LayoutItem | keyof RackDetails, value: any, isRackDetail = false, salesPersonFromPrompt?: string) => {
-      if (selectedItemIds.length === 0 || !isAdmin) return;
-
-      let salesPerson = salesPersonFromPrompt || '';
-      if (isRackDetail && field === 'status' && (value === 'occupied' || value === 'reserved') && !salesPersonFromPrompt) {
-          setSalesPrompt({ field, value, isRackDetail });
-          setSalesPersonInput('');
-          return;
-      }
-
-      const updatedItems: LayoutItem[] = items.map(item => {
-          if (selectedItemIds.includes(item.id)) {
-              if (isRackDetail && (item.type === 'rack' || item.type === 'open_cabin')) {
-                  const currentDetails = item.rackDetails || { status: 'available' as const, jobs: [], volumeOccupied: 0, enclosureType: 'Open Space' as const };
-                  const newDetails = { ...currentDetails, [field]: value } as RackDetails;
-                  
-                  if (salesPerson) {
-                      newDetails.salesPerson = salesPerson;
-                  } else if (field === 'status' && value === 'available') {
-                      newDetails.salesPerson = ''; // Clear if available
-                  }
-                  
-                  return { ...item, rackDetails: newDetails };
-              }
-              return { ...item, [field]: value } as LayoutItem;
-          }
-          return item;
-      });
-      onUpdateItems(activeLevelId, updatedItems);
-  };
-
-  const handlePanelDragStart = (e: React.MouseEvent) => {
-      setIsDraggingPanel(true);
-      setDragStart({ x: e.clientX, y: e.clientY });
-  };
-
-  useEffect(() => {
-      const handleMouseMove = (e: MouseEvent) => {
-          if (isDraggingPanel) {
-              const dx = dragStart.x - e.clientX;
-              const dy = e.clientY - dragStart.y;
-              setPanelPos(prev => ({
-                  x: prev.x + dx,
-                  y: prev.y + dy
-              }));
-              setDragStart({ x: e.clientX, y: e.clientY });
-          }
-      };
-
-      const handleMouseUp = () => {
-          setIsDraggingPanel(false);
-      };
-
-      if (isDraggingPanel) {
-          window.addEventListener('mousemove', handleMouseMove);
-          window.addEventListener('mouseup', handleMouseUp);
-      }
-
-      return () => {
-          window.removeEventListener('mousemove', handleMouseMove);
-          window.removeEventListener('mouseup', handleMouseUp);
-      };
-  }, [isDraggingPanel, dragStart]);
-
-  const addJobToSelected = () => {
-      if (selectedItemIds.length === 0 || !isAdmin) return;
-      const newJob: JobEntry = {
-          id: `job-${Date.now()}`,
-          jobNumber: '',
-          shipperName: '',
-          inDate: new Date().toISOString().split('T')[0],
-          outDate: '',
-          pricePerMonth: 0,
-          cbm: 0,
-          paymentCycle: 'Monthly',
-          status: 'active'
-      };
-      
-      const updatedItems: LayoutItem[] = items.map(item => {
-          if (selectedItemIds.includes(item.id) && (item.type === 'rack' || item.type === 'open_cabin')) {
-              const currentJobs = item.rackDetails?.jobs || [];
-              return { 
-                  ...item, 
-                  rackDetails: { 
-                      ...item.rackDetails!, 
-                      jobs: [...currentJobs, newJob],
-                      status: 'occupied' as const
-                  } 
-              };
-          }
-          return item;
-      });
-      onUpdateItems(activeLevelId, updatedItems);
-  };
-
-  const updateJobInSelected = (jobId: string, field: keyof JobEntry, value: any) => {
-      if (selectedItemIds.length === 0 || !isAdmin) return;
-      const updatedItems: LayoutItem[] = items.map(item => {
-          if (selectedItemIds.includes(item.id) && (item.type === 'rack' || item.type === 'open_cabin')) {
-              const currentJobs = item.rackDetails?.jobs || [];
-              const updatedJobs = currentJobs.map(job => 
-                  job.id === jobId ? { ...job, [field]: value } : job
-              );
-              return { ...item, rackDetails: { ...item.rackDetails!, jobs: updatedJobs } };
-          }
-          return item;
-      });
-      onUpdateItems(activeLevelId, updatedItems);
-  };
-
-  const removeJobFromSelected = (jobId: string) => {
-      if (selectedItemIds.length === 0 || !isAdmin) return;
-      const updatedItems: LayoutItem[] = items.map(item => {
-          if (selectedItemIds.includes(item.id) && (item.type === 'rack' || item.type === 'open_cabin')) {
-              const currentJobs = item.rackDetails?.jobs || [];
-              const updatedJobs = currentJobs.filter(job => job.id !== jobId);
-              const newStatus = updatedJobs.length === 0 ? 'available' as const : item.rackDetails!.status;
-              return { ...item, rackDetails: { ...item.rackDetails!, jobs: updatedJobs, status: newStatus } };
-          }
-          return item;
-      });
-      onUpdateItems(activeLevelId, updatedItems);
-  };
-
-   const updatePackageStatus = (jobId: string, packageNumber: number, status: 'in' | 'out' | 'none') => {
-      if (selectedItemIds.length === 0 || !isAdmin) return;
-      const now = new Date().toLocaleString();
-      const updatedItems: LayoutItem[] = items.map(item => {
-          if (selectedItemIds.includes(item.id) && (item.type === 'rack' || item.type === 'open_cabin')) {
-              const currentJobs = item.rackDetails?.jobs || [];
-              const updatedJobs = currentJobs.map(job => {
-                  if (job.id === jobId) {
-                      const currentPackages = job.packages || [];
-                      const existingPackageIdx = currentPackages.findIndex(p => p.number === packageNumber);
-                      let updatedPackages = [...currentPackages];
-                      
-                      const existingRecord = existingPackageIdx >= 0 ? currentPackages[existingPackageIdx] : null;
-                      const history = existingRecord?.history || [];
-                      
-                      const newHistory = status !== 'none' 
-                        ? [...history, { status: status as 'in' | 'out', timestamp: now }]
-                        : history;
-
-                      const newRecord: PackageRecord = {
-                          number: packageNumber,
-                          status,
-                          inTimestamp: status === 'in' ? now : existingRecord?.inTimestamp,
-                          outTimestamp: status === 'out' ? now : existingRecord?.outTimestamp,
-                          history: newHistory
-                      };
-
-                      if (existingPackageIdx >= 0) {
-                          updatedPackages[existingPackageIdx] = newRecord;
-                      } else {
-                          updatedPackages.push(newRecord);
-                      }
-
-                      return { ...job, packages: updatedPackages };
-                  }
-                  return job;
-              });
-              return { ...item, rackDetails: { ...item.rackDetails!, jobs: updatedJobs } };
-          }
-          return item;
-      });
-      onUpdateItems(activeLevelId, updatedItems);
-  };
-
-  const resetPackages = (jobId: string) => {
-      if (selectedItemIds.length === 0 || !isAdmin) return;
-      const updatedItems: LayoutItem[] = items.map(item => {
-          if (selectedItemIds.includes(item.id) && (item.type === 'rack' || item.type === 'open_cabin')) {
-              const currentJobs = item.rackDetails?.jobs || [];
-              const updatedJobs = currentJobs.map(job => {
-                  if (job.id === jobId) {
-                      return { ...job, packages: [] };
-                  }
-                  return job;
-              });
-              return { ...item, rackDetails: { ...item.rackDetails!, jobs: updatedJobs } };
-          }
-          return item;
-      });
-      onUpdateItems(activeLevelId, updatedItems);
-  };
-
-  const bulkUpdatePackages = (jobId: string, status: 'in' | 'out') => {
-      if (selectedItemIds.length === 0 || !isAdmin) return;
-      const start = parseInt(bulkStart);
-      const end = parseInt(bulkEnd);
-      
-      if (isNaN(start) || isNaN(end) || start < 1 || end > 10000 || start > end) {
-          return;
-      }
-
-      const now = new Date().toLocaleString();
-      const updatedItems: LayoutItem[] = items.map(item => {
-          if (selectedItemIds.includes(item.id) && (item.type === 'rack' || item.type === 'open_cabin')) {
-              const currentJobs = item.rackDetails?.jobs || [];
-              const updatedJobs = currentJobs.map(job => {
-                  if (job.id === jobId) {
-                      const currentPackages = [...(job.packages || [])];
-                      const packageMap = new Map(currentPackages.map(p => [p.number, p]));
-
-                      for (let i = start; i <= end; i++) {
-                          const existing = packageMap.get(i);
-                          const history = existing?.history || [];
-                          const newHistory = [...history, { status, timestamp: now }];
-                          
-                          const newRecord: PackageRecord = {
-                              number: i,
-                              status,
-                              inTimestamp: status === 'in' ? now : existing?.inTimestamp,
-                              outTimestamp: status === 'out' ? now : existing?.outTimestamp,
-                              history: newHistory
-                          };
-                          packageMap.set(i, newRecord);
-                      }
-
-                      return { ...job, packages: Array.from(packageMap.values()) };
-                  }
-                  return job;
-              });
-              return { ...item, rackDetails: { ...item.rackDetails!, jobs: updatedJobs } };
-          }
-          return item;
-      });
-      onUpdateItems(activeLevelId, updatedItems);
-      setBulkStart('');
-      setBulkEnd('');
-  };
-
-  const generateJobArchivePDF = (job: JobEntry) => {
-      const doc = new jsPDF();
-      
-      // Header
-      doc.setFontSize(20);
-      doc.text('Job Archive Report', 14, 22);
-      doc.setFontSize(11);
-      doc.setTextColor(100);
-      doc.text(`Generated on: ${new Date().toLocaleString()}`, 14, 30);
-      
-      // Job Details Table
-      autoTable(doc, {
-          startY: 40,
-          head: [['Field', 'Value']],
-          body: [
-              ['Job Number', `AE${job.jobNumber}`],
-              ['Shipper Name', job.shipperName],
-              ['Price (AED/mo)', job.pricePerMonth.toString()],
-              ['CBM', (job.cbm || 0).toString()],
-              ['Cycle', job.paymentCycle],
-              ['Date IN', job.inDate],
-              ['Date OUT', job.outDate || 'N/A'],
-              ['Total Packages', (job.packages?.length || 0).toString()],
-          ],
-          theme: 'striped',
-          headStyles: { fillColor: [255, 204, 0], textColor: [0, 0, 0] },
-      });
-
-      // Package History Table
-      if (job.packages && job.packages.length > 0) {
-          doc.setFontSize(14);
-          doc.text('Package Activity History', 14, (doc as any).lastAutoTable.finalY + 15);
-          
-          const historyData: any[] = [];
-          job.packages.forEach(pkg => {
-              if (pkg.history && pkg.history.length > 0) {
-                  pkg.history.forEach(event => {
-                      historyData.push([
-                          pkg.number,
-                          event.status.toUpperCase(),
-                          event.timestamp
-                      ]);
-                  });
-              } else {
-                  // Fallback for legacy data
-                  if (pkg.inTimestamp) historyData.push([pkg.number, 'IN (Legacy)', pkg.inTimestamp]);
-                  if (pkg.outTimestamp) historyData.push([pkg.number, 'OUT (Legacy)', pkg.outTimestamp]);
-              }
-          });
-
-          if (historyData.length > 0) {
-              autoTable(doc, {
-                  startY: (doc as any).lastAutoTable.finalY + 20,
-                  head: [['Package #', 'Status', 'Timestamp']],
-                  body: historyData.sort((a, b) => a[0] - b[0]), // Sort by package number
-                  theme: 'grid',
-                  headStyles: { fillColor: [50, 50, 50], textColor: [255, 255, 255] },
-              });
-          } else {
-              doc.setFontSize(10);
-              doc.text('No activity history recorded for these packages.', 14, (doc as any).lastAutoTable.finalY + 25);
-          }
-      }
-
-      doc.save(`Job_Archive_AE${job.jobNumber}_${job.shipperName}.pdf`);
-  };
-
-  const generateQRCode = async (item: LayoutItem) => {
-      const data = { id: item.id, type: item.type, label: item.label, dimensions: `${item.width}x${item.height}`, ...item.rackDetails };
-      try {
-          const url = await QRCode.toDataURL(JSON.stringify(data), { width: 300, margin: 2 });
-          setQrCodeUrl(url);
-      } catch (err) { console.error(err); }
-  };
-
   const selectedItem = selectedItemIds.length === 1 ? items.find(i => i.id === selectedItemIds[0]) : null;
-  const supportsQR = selectedItem && ['rack', 'open_cabin', 'open_space_storage'].includes(selectedItem.type);
 
   const handleConfigChange = (field: string, value: any) => {
     if (!isAdmin || !onUpdateConfig) return;
@@ -872,6 +647,7 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
             <ToolButton tool="stairs" icon={AlignJustify} label="Stairs" />
             <ToolButton tool="office" icon={Square} label="Office" />
             <ToolButton tool="open_cabin" icon={Monitor} label="Cabin" />
+            <ToolButton tool="temp_storage" icon={Package} label="Temp S" />
             <div className="h-px bg-gray-300 w-full my-1"></div>
             <ToolButton tool="fire_exit" icon={Flame} label="Exit" />
             <ToolButton tool="entrance" icon={DoorOpen} label="Entry" />
@@ -883,10 +659,84 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
         </div>
       )}
 
-      {/* --- Top Info Bar --- */}
-      <div className="absolute top-4 right-1/2 transform translate-x-1/2 bg-white/80 p-2 rounded text-sm font-bold text-gray-700 z-10 border border-gray-300 shadow-sm pointer-events-none backdrop-blur flex items-center gap-4">
-        <span>Floor: {activeLevel?.name}</span>
-        {!isAdmin && <span className="bg-gray-800 text-white text-[10px] px-2 py-0.5 rounded flex items-center gap-1"><Lock size={8}/> View Only</span>}
+      {/* --- Top Info & Quick Selection Bar --- */}
+      <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-white/95 backdrop-blur-md px-3 py-1.5 rounded-full text-xs font-semibold text-gray-700 z-20 border border-gray-300 shadow-md flex items-center gap-2 max-w-[90vw] overflow-x-auto custom-scrollbar">
+        <span className="font-bold text-gray-800 shrink-0 px-2 py-0.5 bg-gray-100 rounded-md border border-gray-200">
+          Floor: {activeLevel?.name}
+        </span>
+
+        {isAdmin ? (
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] uppercase font-bold text-gray-400 ml-1 shrink-0">Quick Select:</span>
+            
+            <button
+              onClick={() => setSelectedItemIds(items.map(i => i.id))}
+              className="px-2 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[11px] font-bold transition-colors shrink-0"
+              title="Select all items on this floor (Ctrl+A)"
+            >
+              All ({items.length})
+            </button>
+
+            {cabinCount > 0 && (
+              <button
+                onClick={() => setSelectedItemIds(items.filter(i => i.type === 'open_cabin').map(i => i.id))}
+                className="px-2 py-0.5 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded text-[11px] font-bold transition-colors shrink-0 flex items-center gap-1"
+                title="Select all Cabins on this floor"
+              >
+                <span>Cabins</span>
+                <span className="bg-teal-200/80 px-1 rounded-full text-[10px]">{cabinCount}</span>
+              </button>
+            )}
+
+            {officeCount > 0 && (
+              <button
+                onClick={() => setSelectedItemIds(items.filter(i => i.type === 'office').map(i => i.id))}
+                className="px-2 py-0.5 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded text-[11px] font-bold transition-colors shrink-0 flex items-center gap-1"
+                title="Select all Offices on this floor"
+              >
+                <span>Offices</span>
+                <span className="bg-blue-200/80 px-1 rounded-full text-[10px]">{officeCount}</span>
+              </button>
+            )}
+
+            {rackCount > 0 && (
+              <button
+                onClick={() => setSelectedItemIds(items.filter(i => i.type === 'rack').map(i => i.id))}
+                className="px-2 py-0.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded text-[11px] font-bold transition-colors shrink-0 flex items-center gap-1"
+                title="Select all Racks on this floor"
+              >
+                <span>Racks</span>
+                <span className="bg-amber-200/80 px-1 rounded-full text-[10px]">{rackCount}</span>
+              </button>
+            )}
+
+            {selectedItemIds.length > 0 && (
+              <>
+                <div className="h-3 w-px bg-gray-300 mx-1 shrink-0"></div>
+                <button
+                  onClick={executeDeleteSelected}
+                  className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white rounded text-[11px] font-bold transition-all shrink-0 flex items-center gap-1 shadow-sm active:scale-95"
+                  title="Single press Delete / Backspace on keyboard or click to delete"
+                >
+                  <Trash2 size={11} />
+                  <span>Delete Selected ({selectedItemIds.length})</span>
+                  <kbd className="text-[9px] bg-red-800 text-white px-1 rounded font-mono">Del</kbd>
+                </button>
+                <button
+                  onClick={() => setSelectedItemIds([])}
+                  className="px-1.5 py-0.5 text-gray-500 hover:text-gray-800 text-[11px] font-semibold transition-colors shrink-0"
+                  title="Deselect All (Esc)"
+                >
+                  Clear (Esc)
+                </button>
+              </>
+            )}
+          </div>
+        ) : (
+          <span className="bg-gray-800 text-white text-[10px] px-2 py-0.5 rounded flex items-center gap-1">
+            <Lock size={8}/> View Only
+          </span>
+        )}
       </div>
 
       {/* --- Zoom Controls --- */}
@@ -911,585 +761,6 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
             </div>
       </div>
       
-      {/* --- Properties Panel --- */}
-      {selectedItem && (
-          <div 
-            style={{ top: `${panelPos.y}px`, right: `${panelPos.x}px` }}
-            className={`absolute bg-white rounded-lg shadow-xl z-20 border border-gray-300 flex flex-col transition-all duration-300 ${isPropertiesExpanded ? 'w-[600px]' : 'w-96'} ${isPropertiesMinimized ? 'h-auto' : 'bottom-4 max-h-[85vh]'}`}
-          >
-              <div 
-                onMouseDown={handlePanelDragStart}
-                className="p-3 bg-brand-primary text-white rounded-t-lg flex justify-between items-center border-b-4 border-brand-accent shrink-0 cursor-move active:cursor-grabbing"
-              >
-                  <div className="flex items-center gap-2">
-                    <Move size={14} className="text-brand-accent" />
-                    <span className="font-bold text-sm uppercase text-brand-accent">
-                        {selectedItemIds.length > 1 ? `${selectedItemIds.length} Items Selected` : selectedItem?.type.replace(/_/g, ' ') + ' Properties'}
-                    </span>
-                    {!isAdmin && <Lock size={12} className="text-gray-400"/>}
-                  </div>
-                  <div className="flex items-center gap-2">
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); setIsPropertiesExpanded(!isPropertiesExpanded); }}
-                        className="text-white hover:text-brand-accent transition-colors"
-                        title={isPropertiesExpanded ? "Shrink Width" : "Expand Width"}
-                      >
-                          {isPropertiesExpanded ? <Minimize size={16} /> : <Maximize size={16} />}
-                      </button>
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); setIsPropertiesMinimized(!isPropertiesMinimized); }} 
-                        className="text-white hover:text-brand-accent transition-colors"
-                        title={isPropertiesMinimized ? "Expand" : "Minimize"}
-                      >
-                          {isPropertiesMinimized ? <Plus size={16} /> : <Minus size={16} />}
-                      </button>
-                      <button onClick={(e) => { e.stopPropagation(); duplicateItem(); }} className={`text-white ${isAdmin ? 'hover:text-blue-300' : 'opacity-50 cursor-not-allowed'}`} disabled={!isAdmin} title="Duplicate Items"><Copy size={16} /></button>
-                      <button onClick={(e) => { e.stopPropagation(); deleteItem(); }} className={`text-white ${isAdmin ? 'hover:text-red-300' : 'opacity-50 cursor-not-allowed'}`} disabled={!isAdmin} title="Delete Items"><Trash2 size={16} /></button>
-                      <button onClick={(e) => { e.stopPropagation(); setSelectedItemIds([]); }} className="text-white hover:text-red-500 transition-colors" title="Close Properties"><X size={16} /></button>
-                  </div>
-              </div>
-              
-              {!isPropertiesMinimized && (
-              <div className="p-4 overflow-y-auto custom-scrollbar flex-1 bg-white space-y-4">
-                  {selectedItemIds.length > 1 ? (
-                      <div className="text-center py-10 space-y-4">
-                          <div className="bg-gray-100 p-6 rounded-full w-20 h-20 flex items-center justify-center mx-auto">
-                              <Grid size={32} className="text-gray-400" />
-                          </div>
-                          <p className="text-gray-500 font-medium">Multiple items selected. You can move them together or delete/duplicate the group.</p>
-                      </div>
-                  ) : selectedItem && (
-                      <>
-                        {/* Dimensions */}
-                        <div className="bg-white p-3 rounded border border-gray-300 shadow-sm">
-                            <h5 className="font-bold text-black mb-2 border-b border-gray-200 pb-1">Dimensions & Position</h5>
-                            <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label className="block text-black mb-1 font-bold">Width (cm)</label>
-                                    <input type="number" value={selectedItem.width} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('width', Number(e.target.value))} className="w-full border border-gray-400 p-2 rounded bg-white text-black disabled:bg-gray-100 placeholder-gray-400" />
-                                </div>
-                                <div>
-                                    <label className="block text-black mb-1 font-bold">Length (cm)</label>
-                                    <input type="number" value={selectedItem.height} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('height', Number(e.target.value))} className="w-full border border-gray-400 p-2 rounded bg-white text-black disabled:bg-gray-100 placeholder-gray-400" />
-                                </div>
-                                <div>
-                                    <label className="block text-black mb-1 font-bold">Height (cm)</label>
-                                    <input type="number" value={selectedItem.depth || 0} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('depth', Number(e.target.value))} className="w-full border border-gray-400 p-2 rounded bg-white text-black disabled:bg-gray-100 placeholder-gray-400" />
-                                </div>
-                                <div>
-                                    <label className="block text-black mb-1 font-bold flex items-center gap-1"><RotateCw size={10}/> Rotation</label>
-                                    <div className="flex gap-2">
-                                        <input type="range" min="0" max="360" step="15" value={selectedItem.rotation} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('rotation', Number(e.target.value))} className="w-full accent-brand-accent"/>
-                                        <span className="w-8 text-center bg-white border border-gray-400 rounded p-1 text-black font-mono">{selectedItem.rotation}°</span>
-                                    </div>
-                                </div>
-                            </div>
-                            <div className="mt-2">
-                                <label className="block text-black mb-1 font-bold">Label</label>
-                                <input type="text" value={selectedItem.label || ''} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('label', e.target.value)} className="w-full border border-gray-400 p-2 rounded bg-white disabled:bg-gray-100 font-bold text-black placeholder-gray-400" />
-                            </div>
-                        </div>
-
-                        {/* Visual Settings */}
-                        <div className="bg-blue-50 p-3 rounded border border-blue-200 shadow-sm">
-                            <h5 className="font-bold text-blue-900 mb-2 border-b border-blue-200 pb-1 flex items-center gap-2">
-                                <AlignJustify size={14} className="text-blue-600" /> Visual Settings
-                            </h5>
-                            <div>
-                                <label className="block text-blue-800 mb-1 text-[10px] font-bold uppercase">Label Font Size (px)</label>
-                                <div className="flex items-center gap-3">
-                                    <input 
-                                        type="range" 
-                                        min="6" 
-                                        max="24" 
-                                        step="1"
-                                        value={config.labelFontSize || 10}
-                                        disabled={!isAdmin}
-                                        onChange={(e) => {
-                                            const val = parseInt(e.target.value);
-                                            handleConfigChange('labelFontSize', val);
-                                        }}
-                                        className="flex-1 h-2 bg-blue-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                                    />
-                                    <span className="text-xs font-bold text-blue-900 w-8">{config.labelFontSize || 10}px</span>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        {/* QR Code */}
-                        {supportsQR && (
-                            <div className="bg-white p-3 rounded border border-gray-300 shadow-sm">
-                                <div className="flex justify-between items-center mb-2 border-b border-gray-200 pb-1">
-                                    <h4 className="font-bold text-black flex items-center gap-2"><QrCode size={14}/> Quick Response Code</h4>
-                                </div>
-                                {!qrCodeUrl ? (
-                                    <button onClick={() => generateQRCode(selectedItem)} className="w-full py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded border border-gray-300 text-xs transition-colors flex items-center justify-center gap-2"><QrCode size={14} /> Generate QR Code</button>
-                                ) : (
-                                    <div className="flex flex-col items-center gap-2">
-                                        <img src={qrCodeUrl} alt="Item QR Code" className="w-32 h-32 border border-gray-200 rounded p-1" />
-                                        <a href={qrCodeUrl} download={`QR-${selectedItem.label || selectedItem.id}.png`} className="w-full py-1.5 bg-brand-accent hover:bg-yellow-400 text-black font-bold rounded text-xs transition-colors flex items-center justify-center gap-2"><Download size={14} /> Download QR Image</a>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                        {/* Rack Details */}
-                        {(selectedItem.type === 'rack' || selectedItem.type === 'open_cabin') && selectedItem.rackDetails && (
-                            <div className="space-y-4">
-                                <div className="bg-white p-3 rounded border border-gray-300 shadow-sm">
-                                        <div className="flex justify-between items-center mb-3 border-b border-gray-200 pb-1">
-                                            <h4 className="font-bold text-black flex items-center gap-2"><Activity size={14}/> Rack Configuration</h4>
-                                            <div className="flex gap-2">
-                                                <select value={selectedItem.rackDetails.status} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('status', e.target.value, true)} className="border border-gray-400 p-1 rounded font-bold uppercase text-[10px] tracking-wider text-black bg-white">
-                                                    <option value="available">Available</option>
-                                                    <option value="occupied">Occupied</option>
-                                                    <option value="reserved">Reserved</option>
-                                                </select>
-                                                <select value={selectedItem.rackDetails.enclosureType} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('enclosureType', e.target.value, true)} className="border border-gray-400 p-1 rounded bg-white text-black text-[10px] font-bold">
-                                                    <option value="Open Space">Open Space</option>
-                                                    <option value="Shuttered Warehouse">Shuttered</option>
-                                                    <option value="Close Cabin">Close Cabin</option>
-                                                </select>
-                                            </div>
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-3">
-                                            <div>
-                                                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Levels</label>
-                                                <input type="number" value={selectedItem.rackDetails.levels} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('levels', Number(e.target.value), true)} className="w-full border border-gray-400 p-1.5 rounded bg-white text-black text-xs" />
-                                            </div>
-                                            <div>
-                                                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Capacity (kg)</label>
-                                                <input type="number" value={selectedItem.rackDetails.capacityPerLevel} disabled={!isAdmin} onChange={(e) => updateSelectedProperty('capacityPerLevel', Number(e.target.value), true)} className="w-full border border-gray-400 p-1.5 rounded bg-white text-black text-xs" />
-                                            </div>
-                                        </div>
-                                </div>
-
-                                {selectedItem.rackDetails.salesPerson && (
-                                    <div className="mb-3 p-2 bg-blue-50 border border-blue-100 rounded flex items-center justify-between">
-                                        <div className="flex items-center gap-2">
-                                            <User size={12} className="text-blue-500" />
-                                            <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider">Sales: {selectedItem.rackDetails.salesPerson}</span>
-                                        </div>
-                                        {isAdmin && (
-                                            <button 
-                                                onClick={() => {
-                                                    const newName = window.prompt("Update Sales Person Name:", selectedItem.rackDetails!.salesPerson);
-                                                    if (newName !== null) updateSelectedProperty('salesPerson', newName, true);
-                                                }}
-                                                className="text-[10px] text-blue-500 hover:underline font-bold"
-                                            >
-                                                Edit
-                                            </button>
-                                        )}
-                                    </div>
-                                )}
-
-                                <div className="flex justify-between items-center mb-2">
-                                    <h5 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Active Jobs ({selectedItem.rackDetails.jobs?.length || 0})</h5>
-                                    {isAdmin && (
-                                        <button onClick={addJobToSelected} className="flex items-center gap-1 text-[10px] font-bold bg-brand-accent px-2 py-1 rounded hover:bg-yellow-400 transition-colors">
-                                            <Plus size={12}/> Add Job
-                                        </button>
-                                    )}
-                                </div>
-
-                                <div className="space-y-4">
-                                    {(!selectedItem.rackDetails.jobs || selectedItem.rackDetails.jobs.length === 0) && (
-                                        <div className="text-center py-4 border-2 border-dashed border-gray-200 rounded text-gray-400 text-xs">
-                                            No jobs assigned to this {selectedItem.type}
-                                        </div>
-                                    )}
-                                    {selectedItem.rackDetails.jobs?.map((job, idx) => (
-                                        <div key={job.id} className="p-3 border border-gray-200 rounded-md bg-gray-50 relative group">
-                                            {isAdmin && (
-                                                <div className="absolute top-2 right-2 flex gap-2">
-                                                    <button 
-                                                        onClick={() => generateJobArchivePDF(job)}
-                                                        className="text-gray-400 hover:text-blue-500 transition-colors"
-                                                        title="Save Archive PDF"
-                                                    >
-                                                        <FileDown size={14}/>
-                                                    </button>
-                                                    <button 
-                                                        onClick={() => removeJobFromSelected(job.id)}
-                                                        className="text-gray-400 hover:text-red-500 transition-colors"
-                                                        title="Delete Job"
-                                                    >
-                                                        <Trash2 size={14}/>
-                                                    </button>
-                                                </div>
-                                            )}
-                                            <div className="grid grid-cols-2 gap-3">
-                                                <div className="col-span-2">
-                                                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Job Number</label>
-                                                    <div className="flex">
-                                                        <span className="inline-flex items-center px-2 text-black bg-gray-200 border border-r-0 border-gray-400 rounded-l-md text-[10px] font-bold">AE</span>
-                                                        <input 
-                                                            type="text" 
-                                                            value={job.jobNumber} 
-                                                            disabled={!isAdmin} 
-                                                            onChange={(e) => updateJobInSelected(job.id, 'jobNumber', e.target.value)} 
-                                                            className="rounded-none rounded-r-md border border-gray-400 w-full p-1.5 disabled:bg-white font-mono text-xs text-black" 
-                                                            placeholder="0001"
-                                                        />
-                                                    </div>
-                                                </div>
-                                                <div className="col-span-2">
-                                                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Shipper Name</label>
-                                                    <input 
-                                                        type="text" 
-                                                        value={job.shipperName} 
-                                                        disabled={!isAdmin} 
-                                                        onChange={(e) => updateJobInSelected(job.id, 'shipperName', e.target.value)} 
-                                                        className="w-full border border-gray-400 p-1.5 rounded bg-white font-bold text-black text-xs" 
-                                                        placeholder="Enter shipper name..." 
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Price (AED/mo)</label>
-                                                    <input 
-                                                        type="number" 
-                                                        value={job.pricePerMonth} 
-                                                        disabled={!isAdmin} 
-                                                        onChange={(e) => updateJobInSelected(job.id, 'pricePerMonth', Number(e.target.value))} 
-                                                        className="w-full border border-gray-400 p-1.5 rounded bg-white text-black text-xs" 
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">CBM</label>
-                                                    <input 
-                                                        type="number" 
-                                                        value={job.cbm || 0} 
-                                                        disabled={!isAdmin} 
-                                                        onChange={(e) => updateJobInSelected(job.id, 'cbm', Number(e.target.value))} 
-                                                        className="w-full border border-gray-400 p-1.5 rounded bg-white text-black text-xs" 
-                                                        placeholder="0.00"
-                                                        step="0.01"
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Cycle</label>
-                                                    <select 
-                                                        value={job.paymentCycle} 
-                                                        disabled={!isAdmin} 
-                                                        onChange={(e) => updateJobInSelected(job.id, 'paymentCycle', e.target.value)} 
-                                                        className="w-full border border-gray-400 p-1.5 rounded bg-white text-black text-xs"
-                                                    >
-                                                        <option value="Monthly">Monthly</option>
-                                                        <option value="Quarterly">Quarterly</option>
-                                                        <option value="Yearly">Yearly</option>
-                                                    </select>
-                                                </div>
-                                                <div>
-                                                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Date IN</label>
-                                                    <input 
-                                                        type="date" 
-                                                        value={job.inDate} 
-                                                        disabled={!isAdmin} 
-                                                        onChange={(e) => updateJobInSelected(job.id, 'inDate', e.target.value)} 
-                                                        className="w-full border border-gray-400 p-1.5 rounded bg-white text-black text-xs" 
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Date OUT</label>
-                                                    <input 
-                                                        type="date" 
-                                                        value={job.outDate} 
-                                                        disabled={!isAdmin} 
-                                                        onChange={(e) => updateJobInSelected(job.id, 'outDate', e.target.value)} 
-                                                        className="w-full border border-gray-400 p-1.5 rounded bg-white text-black text-xs" 
-                                                    />
-                                                </div>
-                                                <button 
-                                                    onClick={() => setActivePackageJobId(job.id)}
-                                                    className="col-span-2 mt-2 flex items-center justify-center gap-2 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-[10px] font-bold uppercase tracking-wider"
-                                                >
-                                                    <Box size={14} /> Manage Packages (1-10,000)
-                                                </button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-                      </>
-                  )}
-              </div>
-              )}
-          </div>
-      )}
-
-      {/* --- Package Management Modal --- */}
-      {activePackageJobId && (() => {
-          const job = selectedItem?.rackDetails?.jobs?.find(j => j.id === activePackageJobId);
-          if (!job) return null;
-
-          const packages = job.packages || [];
-          const packageMap = new Map(packages.map(p => [p.number, p]));
-
-          return (
-              <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-[110] flex items-center justify-center p-4">
-                  <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl h-[90vh] flex flex-col border-4 border-blue-600 overflow-hidden">
-                      <div className="p-4 bg-blue-600 text-white flex justify-between items-center shrink-0">
-                          <div className="flex items-center gap-3">
-                              <Box size={24} className="text-blue-200" />
-                              <div>
-                                  <h2 className="text-xl font-black uppercase tracking-tighter leading-none">Package Tracking</h2>
-                                  <p className="text-[10px] font-bold text-blue-200 uppercase tracking-widest mt-1">Job: {job.jobNumber} | Shipper: {job.shipperName}</p>
-                              </div>
-                          </div>
-                          <button onClick={closePackageModal} className="p-2 hover:bg-white/10 rounded-full transition-colors">
-                              <X size={24} />
-                          </button>
-                      </div>
-
-                      <div className="p-4 bg-gray-50 border-b border-gray-200 flex flex-wrap items-center gap-4 shrink-0">
-                          <div className="flex-1 min-w-[200px] relative">
-                              <input 
-                                  type="text" 
-                                  placeholder="Search Package Number (1-10,000)..." 
-                                  className="w-full pl-10 pr-4 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:ring-0 transition-all font-bold text-gray-700"
-                                  value={packageSearch}
-                                  onChange={(e) => setPackageSearch(e.target.value)}
-                              />
-                              <Grid className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                          </div>
-                          <div className="flex items-center gap-4 text-[10px] font-bold uppercase tracking-wider">
-                              <div className="flex items-center gap-1"><div className="w-3 h-3 bg-white border border-gray-300 rounded"></div> None</div>
-                              <div className="flex items-center gap-1"><div className="w-3 h-3 bg-green-500 rounded"></div> Tagged IN</div>
-                              <div className="flex items-center gap-1"><div className="w-3 h-3 bg-red-500 rounded"></div> Tagged OUT</div>
-                          </div>
-                      </div>
-
-                      <div className="p-4 bg-white border-b border-gray-200 flex flex-wrap items-center gap-4 shrink-0">
-                          <div className="flex items-center gap-2">
-                              <span className="text-[10px] font-black uppercase text-gray-400">Bulk Action:</span>
-                              <input 
-                                  type="number" 
-                                  placeholder="From" 
-                                  className="w-20 px-2 py-1 border-2 border-gray-200 rounded text-xs font-bold focus:border-blue-500 outline-none"
-                                  value={bulkStart}
-                                  onChange={(e) => setBulkStart(e.target.value)}
-                              />
-                              <span className="text-gray-400">-</span>
-                              <input 
-                                  type="number" 
-                                  placeholder="To" 
-                                  className="w-20 px-2 py-1 border-2 border-gray-200 rounded text-xs font-bold focus:border-blue-500 outline-none"
-                                  value={bulkEnd}
-                                  onChange={(e) => setBulkEnd(e.target.value)}
-                              />
-                              <button 
-                                  onClick={() => bulkUpdatePackages(job.id, 'in')}
-                                  className="px-3 py-1 bg-green-600 text-white text-[10px] font-bold rounded hover:bg-green-700 transition-colors uppercase"
-                              >
-                                  Mark IN
-                              </button>
-                              <button 
-                                  onClick={() => bulkUpdatePackages(job.id, 'out')}
-                                  className="px-3 py-1 bg-red-600 text-white text-[10px] font-bold rounded hover:bg-red-700 transition-colors uppercase"
-                              >
-                                  Mark OUT
-                              </button>
-                          </div>
-                          <div className="ml-auto flex items-center gap-2">
-                              {showResetConfirm ? (
-                                  <div className="flex items-center gap-2 bg-red-50 p-1 rounded border border-red-200">
-                                      <input 
-                                          type="text" 
-                                          placeholder="Type 'reset'..." 
-                                          className="w-24 px-2 py-1 border border-red-300 rounded text-[10px] font-bold outline-none"
-                                          value={resetConfirmText}
-                                          onChange={(e) => setResetConfirmText(e.target.value)}
-                                          autoFocus
-                                      />
-                                      <button 
-                                          onClick={() => {
-                                              if (resetConfirmText === 'reset') {
-                                                  resetPackages(job.id);
-                                                  setShowResetConfirm(false);
-                                                  setResetConfirmText('');
-                                              }
-                                          }}
-                                          className="px-2 py-1 bg-red-600 text-white text-[10px] font-bold rounded hover:bg-red-700"
-                                      >
-                                          Confirm
-                                      </button>
-                                      <button 
-                                          onClick={() => {
-                                              setShowResetConfirm(false);
-                                              setResetConfirmText('');
-                                          }}
-                                          className="text-gray-400 hover:text-gray-600"
-                                      >
-                                          <X size={14} />
-                                      </button>
-                                  </div>
-                              ) : (
-                                  <button 
-                                      onClick={() => setShowResetConfirm(true)}
-                                      className="flex items-center gap-1 px-3 py-1 border-2 border-red-200 text-red-600 text-[10px] font-bold rounded hover:bg-red-50 transition-colors uppercase"
-                                  >
-                                      <RotateCw size={12} /> Reset All
-                                  </button>
-                              )}
-                          </div>
-                      </div>
-
-                      <div className="flex-1 overflow-y-auto p-4 custom-scrollbar bg-gray-100">
-                          <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-12 gap-2 pt-10 pb-10">
-                              {Array.from({ length: 10000 }, (_, i) => i + 1)
-                                  .filter(num => !packageSearch || num.toString().includes(packageSearch))
-                                  .map(num => {
-                                      const record = packageMap.get(num);
-                                      const status = record?.status || 'none';
-                                      const history = record?.history || [];
-                                      const latestHistory = [...history].reverse().slice(0, 2);
-                                      
-                                      return (
-                                          <div 
-                                              key={num}
-                                              className={`
-                                                  relative group aspect-square flex flex-col items-center justify-center rounded-lg border-2 transition-all cursor-pointer hover:z-50
-                                                  ${status === 'none' ? 'bg-white border-gray-200 hover:border-blue-300' : ''}
-                                                  ${status === 'in' ? 'bg-green-50 border-green-500 text-green-700' : ''}
-                                                  ${status === 'out' ? 'bg-red-50 border-red-500 text-red-700' : ''}
-                                                  ${expandedPackageHistory === num ? 'ring-4 ring-blue-400 z-[100]' : ''}
-                                              `}
-                                              onClick={() => {
-                                                  const nextStatus = status === 'none' ? 'in' : (status === 'in' ? 'out' : 'none');
-                                                  updatePackageStatus(job.id, num, nextStatus);
-                                              }}
-                                          >
-                                              <span className="text-sm font-black">{num}</span>
-                                              <span className="text-[8px] font-bold uppercase opacity-60">{status}</span>
-                                              
-                                              {/* History Toggle Button */}
-                                              {history.length > 0 && (
-                                                  <button 
-                                                      onClick={(e) => {
-                                                          e.stopPropagation();
-                                                          setExpandedPackageHistory(expandedPackageHistory === num ? null : num);
-                                                      }}
-                                                      className="absolute top-0 right-0 p-0.5 bg-gray-100 rounded-bl text-gray-500 hover:bg-blue-500 hover:text-white transition-colors"
-                                                  >
-                                                      <Clock size={8} />
-                                                  </button>
-                                              )}
-
-                                              {/* Tooltip on hover (2 latest) */}
-                                              {latestHistory.length > 0 && expandedPackageHistory !== num && (
-                                                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 bg-gray-900 text-white p-2 rounded shadow-xl text-[8px] font-mono opacity-0 invisible group-hover:opacity-100 group-hover:visible pointer-events-none transition-all z-[100]">
-                                                      <div className="font-bold text-blue-400 mb-1 uppercase tracking-widest">Latest Activity:</div>
-                                                      {latestHistory.map((h, i) => (
-                                                          <div key={i} className={h.status === 'in' ? 'text-green-400' : 'text-red-400'}>
-                                                              {h.status.toUpperCase()}: {h.timestamp}
-                                                          </div>
-                                                      ))}
-                                                      {history.length > 2 && <div className="text-gray-400 mt-1 italic">Click clock for full history ({history.length})</div>}
-                                                  </div>
-                                              )}
-
-                                              {/* Expanded History Modal/Overlay */}
-                                              {expandedPackageHistory === num && (
-                                                  <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-64 bg-white border-2 border-blue-500 rounded-lg shadow-2xl p-3 z-[110] cursor-default" onClick={e => e.stopPropagation()}>
-                                                      <div className="flex justify-between items-center mb-2 border-b pb-1">
-                                                          <span className="text-xs font-black text-blue-600 uppercase">Package {num} History</span>
-                                                          <button onClick={() => setExpandedPackageHistory(null)} className="text-gray-400 hover:text-red-500">
-                                                              <X size={14} />
-                                                          </button>
-                                                      </div>
-                                                      <div className="max-h-48 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
-                                                          {[...history].reverse().map((h, i) => (
-                                                              <div key={i} className={`flex justify-between items-center p-1.5 rounded text-[9px] font-bold ${h.status === 'in' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
-                                                                  <span className="uppercase">{h.status}</span>
-                                                                  <span className="font-mono text-gray-500">{h.timestamp}</span>
-                                                              </div>
-                                                          ))}
-                                                      </div>
-                                                  </div>
-                                              )}
-                                          </div>
-                                      );
-                                  })}
-                          </div>
-                      </div>
-                      
-                      <div className="p-4 bg-white border-t border-gray-200 flex justify-between items-center shrink-0">
-                          <div className="text-xs font-bold text-gray-500">
-                              Total Packages: 10,000 | 
-                              <span className="text-green-600 ml-2">IN: {packages.filter(p => p.status === 'in').length}</span> | 
-                              <span className="text-red-600 ml-2">OUT: {packages.filter(p => p.status === 'out').length}</span>
-                          </div>
-                          <button 
-                              onClick={closePackageModal}
-                              className="px-8 py-2 bg-gray-900 text-white font-bold rounded-lg hover:bg-black transition-colors uppercase tracking-widest text-xs"
-                          >
-                              Done
-                          </button>
-                      </div>
-                  </div>
-              </div>
-          );
-      })()}
-
-      {/* --- Custom Sales Prompt Modal --- */}
-      {salesPrompt && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-              <div className="bg-white rounded-xl shadow-2xl w-full max-w-md border-4 border-brand-primary overflow-hidden">
-                  <div className="p-4 bg-brand-primary text-white flex justify-between items-center border-b-4 border-brand-accent">
-                      <div className="flex items-center gap-2">
-                          <User size={20} className="text-brand-accent" />
-                          <h2 className="text-lg font-bold uppercase tracking-tight">Sales Person Required</h2>
-                      </div>
-                      <button onClick={() => setSalesPrompt(null)} className="p-1 hover:bg-white/10 rounded transition-colors">
-                          <X size={24} />
-                      </button>
-                  </div>
-                  <div className="p-6 space-y-4">
-                      <p className="text-sm text-gray-600 font-medium">
-                          Please enter the name of the Sales Person responsible for this {salesPrompt.value} rack.
-                      </p>
-                      <div className="relative">
-                          <User className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                          <input 
-                              type="text" 
-                              placeholder="Sales Person Name..." 
-                              className="w-full pl-10 pr-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-lg focus:border-brand-primary focus:ring-0 transition-all font-bold text-gray-800"
-                              value={salesPersonInput}
-                              onChange={(e) => setSalesPersonInput(e.target.value)}
-                              autoFocus
-                              onKeyDown={(e) => {
-                                  if (e.key === 'Enter' && salesPersonInput.trim()) {
-                                      updateSelectedProperty(salesPrompt.field as any, salesPrompt.value, salesPrompt.isRackDetail, salesPersonInput);
-                                      setSalesPrompt(null);
-                                  }
-                              }}
-                          />
-                      </div>
-                      <div className="flex gap-3 pt-2">
-                          <button 
-                              onClick={() => setSalesPrompt(null)}
-                              className="flex-1 py-3 border-2 border-gray-200 text-gray-500 font-bold rounded-lg hover:bg-gray-50 transition-colors"
-                          >
-                              Cancel
-                          </button>
-                          <button 
-                              disabled={!salesPersonInput.trim()}
-                              onClick={() => {
-                                  updateSelectedProperty(salesPrompt.field as any, salesPrompt.value, salesPrompt.isRackDetail, salesPersonInput);
-                                  setSalesPrompt(null);
-                              }}
-                              className="flex-1 py-3 bg-brand-primary text-white font-bold rounded-lg hover:bg-black transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                              Confirm
-                          </button>
-                      </div>
-                  </div>
-              </div>
-          </div>
-      )}
-
       {/* --- Main SVG Canvas with Zoom & Scroll --- */}
       <div 
         ref={containerRef}
@@ -1530,7 +801,30 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
                 <rect width={dimensions.length} height={dimensions.width} fill="url(#grid)" pointerEvents="none" />
 
                 {/* --- Render Items (Memoized) --- */}
-                <ItemsLayer items={items} selectedItemIds={selectedItemIds} onMouseDown={handleMouseDown} labelFontSize={config.labelFontSize || 10} />
+                <ItemsLayer 
+                    items={items} 
+                    selectedItemIds={selectedItemIds} 
+                    onMouseDown={handleMouseDown} 
+                    labelFontSize={config.labelFontSize || 10} 
+                    jobPrefix={(BRANCH_MAP[config.branch || 'UAE'] || BRANCH_MAP['UAE']).jobPrefix}
+                />
+
+                {/* --- Rubberband Marquee Selection Box --- */}
+                {selectionBox && (
+                    <g pointerEvents="none">
+                        <rect 
+                            x={Math.min(selectionBox.startX, selectionBox.currentX)} 
+                            y={Math.min(selectionBox.startY, selectionBox.currentY)} 
+                            width={Math.max(1, Math.abs(selectionBox.currentX - selectionBox.startX))} 
+                            height={Math.max(1, Math.abs(selectionBox.currentY - selectionBox.startY))} 
+                            fill="rgba(59, 130, 246, 0.16)" 
+                            stroke="#2563eb" 
+                            strokeWidth={2} 
+                            strokeDasharray="6,4" 
+                            rx={3}
+                        />
+                    </g>
+                )}
 
                 {/* --- Ghost Preview Item --- */}
                 {isAdmin && activeTool !== 'select' && hoverPos && (
@@ -1570,6 +864,78 @@ const View2D: React.FC<Props> = ({ config, onUpdateItems, activeLevelId, isAdmin
             </svg>
         </div>
       </div>
+
+      {/* --- Multi-Selection Quick Floating Action Bar --- */}
+      {selectedItemIds.length > 0 && (
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 bg-gray-900/95 text-white backdrop-blur-md px-4 py-2.5 rounded-2xl shadow-2xl border border-gray-700/80 flex items-center gap-3 animate-in fade-in slide-in-from-bottom-3 duration-200">
+              <div className="flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-black flex items-center justify-center shadow">
+                      {selectedItemIds.length}
+                  </span>
+                  <div className="flex flex-col">
+                      <span className="text-xs font-bold uppercase tracking-wider text-gray-200 whitespace-nowrap">
+                          {selectedItemIds.length === 1 ? '1 Unit Selected' : `${selectedItemIds.length} Units Selected`}
+                      </span>
+                      {selectedBreakdown && selectedItemIds.length > 1 && (
+                          <span className="text-[10px] text-blue-300 font-semibold whitespace-nowrap">
+                              {selectedBreakdown}
+                          </span>
+                      )}
+                  </div>
+              </div>
+
+              <div className="h-5 w-px bg-gray-700 mx-1"></div>
+
+              {isAdmin && (
+                  <>
+                      <button
+                          onClick={executeDeleteSelected}
+                          className="flex items-center gap-1.5 px-3.5 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-black uppercase tracking-wider transition-all shadow-md active:scale-95 whitespace-nowrap"
+                          title="Delete Selected (Press Delete or Backspace on keyboard)"
+                      >
+                          <Trash2 size={14} />
+                          <span>Delete All</span>
+                          <kbd className="ml-1 text-[9px] bg-red-800 text-red-100 px-1.5 py-0.5 rounded font-mono font-bold">Del</kbd>
+                      </button>
+
+                      <button
+                          onClick={() => {
+                              const newItems: LayoutItem[] = [];
+                              const newIds: string[] = [];
+                              selectedItemIds.forEach(id => {
+                                  const item = items.find(i => i.id === id);
+                                  if (!item) return;
+                                  const newId = `${item.type}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+                                  newItems.push({
+                                      ...item,
+                                      id: newId,
+                                      x: item.x + 30,
+                                      y: item.y + 30,
+                                      label: item.label ? `${item.label} (Copy)` : ''
+                                  });
+                                  newIds.push(newId);
+                              });
+                              onUpdateItems(activeLevelId, [...items, ...newItems]);
+                              setSelectedItemIds(newIds);
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-200 hover:text-white rounded-lg text-xs font-bold uppercase tracking-wider transition-all border border-gray-700 active:scale-95 whitespace-nowrap"
+                          title="Duplicate Selected"
+                      >
+                          <Copy size={13} />
+                          <span>Duplicate</span>
+                      </button>
+                  </>
+              )}
+
+              <button
+                  onClick={() => setSelectedItemIds([])}
+                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200 transition-colors p-1"
+                  title="Deselect All (Esc)"
+              >
+                  <X size={15} />
+              </button>
+          </div>
+      )}
     </div>
   );
 };

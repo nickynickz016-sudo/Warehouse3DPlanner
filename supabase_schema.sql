@@ -22,3 +22,21 @@ on public.warehouses
 for all
 using (true)
 with check (true);
+
+-- 4. Create the 'passports' table for immutable snapshots
+create table public.passports (
+  id uuid default gen_random_uuid() primary key,
+  unit_id text not null,
+  warehouse_name text,
+  data jsonb not null, -- Stores the snapshot of JobEntry or LayoutItem
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- 5. Enable RLS and public access for passports
+alter table public.passports enable row level security;
+
+create policy "Enable all access for public passports"
+on public.passports
+for all
+using (true)
+with check (true);

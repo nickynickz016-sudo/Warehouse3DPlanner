@@ -183,6 +183,18 @@ const View3D: React.FC<Props> = ({ config }) => {
                                     </Text>
                                  </group>
                             );
+                        case 'temp_storage':
+                             return (
+                                 <group key={item.id} position={[posX, h/2, posZ]} rotation={[0, -rotation * Math.PI / 180, 0]}>
+                                    <mesh>
+                                        <boxGeometry args={[item.width, h, item.height]} />
+                                        <meshStandardMaterial color={item.color || "#99f6e4"} />
+                                    </mesh>
+                                    <Text position={[0, h/2 + 20, 0]} fontSize={20} color="#111111" rotation={[-Math.PI/2, 0, 0]}>
+                                        {item.label}
+                                    </Text>
+                                 </group>
+                             );
                         case 'open_space_storage':
                              return (
                                  <group key={item.id} position={[posX, 3, posZ]} rotation={[0, -rotation * Math.PI / 180, 0]}>

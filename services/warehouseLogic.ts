@@ -173,8 +173,10 @@ export const calculateStats = (config: WarehouseConfig): StorageStats => {
   let totalPallets = 0;
   let rackCount = 0;
   let totalVolume = 0;
+  let totalOccupiedCbm = 0;
 
   config.levels.forEach(level => {
+      totalOccupiedCbm += getLevelOccupiedCbm(level);
       if (level.items.length > 0) {
           level.items.forEach(item => {
               if (item.type === 'rack') {
@@ -205,7 +207,25 @@ export const calculateStats = (config: WarehouseConfig): StorageStats => {
   return {
     palletPositions: totalPallets,
     cubicVolume: totalVolume, // kept in cm3 for precision, component converts to m3
+    occupiedVolume: Math.round(totalOccupiedCbm * 100) / 100,
     usableEfficiency: efficiency,
     rackCount
   };
+};
+
+/**
+ * Calculates total CBM occupied by active jobs in a level
+ */
+export const getLevelOccupiedCbm = (level: Level): number => {
+  let total = 0;
+  level.items.forEach(item => {
+    if (item.rackDetails?.jobs) {
+      item.rackDetails.jobs.forEach(job => {
+        if (job.status === 'active') {
+          total += (job.cbm || 0);
+        }
+      });
+    }
+  });
+  return Math.round(total * 100) / 100;
 };

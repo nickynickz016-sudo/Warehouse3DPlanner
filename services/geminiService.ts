@@ -2,21 +2,35 @@ import { GoogleGenAI } from "@google/genai";
 import { WarehouseConfig, StorageStats, GeminiOptimizationResult, LayoutItem } from '../types';
 import { PALLET_WIDTH, PALLET_DEPTH } from '../constants';
 
+const getGeminiApiKey = (): string => {
+  if (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) {
+    return process.env.GEMINI_API_KEY;
+  }
+  if (typeof process !== 'undefined' && process.env?.API_KEY) {
+    return process.env.API_KEY;
+  }
+  if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GEMINI_API_KEY) {
+    return import.meta.env.VITE_GEMINI_API_KEY as string;
+  }
+  return '';
+};
+
 export const getAIOptimization = async (
   config: WarehouseConfig, 
   stats: StorageStats
 ): Promise<GeminiOptimizationResult> => {
-  if (!process.env.API_KEY) {
+  const apiKey = getGeminiApiKey();
+  if (!apiKey) {
     return {
-      suggestion: "API Key not configured. Please set the API_KEY environment variable to use AI features.",
+      suggestion: "Gemini API Key not configured. Please set GEMINI_API_KEY or VITE_GEMINI_API_KEY in your Netlify or environment settings to enable AI features.",
       score: 0,
       potentialRevenue: "AED 0",
       maxCbm: "0 m³"
     };
   }
 
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  
+  const ai = new GoogleGenAI({ apiKey });
+
   // Data prep for prompt
   const dims = config.dimensions;
   const areaM2 = config.dimensions.totalArea;
@@ -66,7 +80,7 @@ export const getAIOptimization = async (
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: prompt,
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
       config: { responseMimeType: 'application/json' }
     });
 
