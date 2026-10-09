@@ -80,6 +80,11 @@ export interface Level {
   height: number; // Ceiling height of this level (cm)
   totalVolumeCapacity: number; // Total m3 available for this floor
   items: LayoutItem[];
+  // Per-floor financial goals & numbers
+  pricePerCbm?: number; // Target price per CBM for this floor (currency/m³)
+  targetRevenue?: number; // Target monthly revenue goal for this floor
+  operatingCost?: number; // Estimated monthly operating cost / budget for this floor
+  targetOccupancyRate?: number; // Target occupancy rate percentage (e.g. 85%)
 }
 
 export type BranchCode = 'UAE' | 'QATAR' | 'KSA';

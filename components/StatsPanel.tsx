@@ -1,6 +1,6 @@
 import React from 'react';
-import { StorageStats, WarehouseConfig } from '../types';
-import { Package, Maximize, BarChart3, Layers, TrendingUp, DollarSign, ChevronDown, ChevronUp, Search } from 'lucide-react';
+import { StorageStats, WarehouseConfig, BRANCH_MAP } from '../types';
+import { Package, Maximize, BarChart3, Layers, TrendingUp, DollarSign, ChevronDown, ChevronUp, Search, Coins } from 'lucide-react';
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 interface Props {
@@ -13,12 +13,17 @@ interface Props {
 }
 
 const StatsPanel: React.FC<Props> = ({ stats, config, aiData, isOpen, onToggle, onOpenSearch }) => {
+  const currency = config.branch ? (BRANCH_MAP[config.branch]?.currency || 'AED') : 'AED';
   
   // stats.cubicVolume is in cm3. Convert to m3 (1,000,000 cm3 = 1 m3)
   const volumeM3 = Math.round(stats.cubicVolume / 1000000);
   
-  // Simple calculation if AI hasn't run yet
-  const estimatedCurrentRevenue = volumeM3 * config.pricePerCbm;
+  // Projected revenue calculated accurately using each floor's custom rate
+  const estimatedCurrentRevenue = config.levels.reduce((total, level) => {
+    const floorPrice = level.pricePerCbm ?? config.pricePerCbm ?? 25;
+    const capacity = level.totalVolumeCapacity || 0;
+    return total + (capacity * floorPrice);
+  }, 0) || (volumeM3 * (config.pricePerCbm || 25));
 
   const chartData = [
     { name: 'Pallets', value: stats.palletPositions },
@@ -98,7 +103,7 @@ const StatsPanel: React.FC<Props> = ({ stats, config, aiData, isOpen, onToggle, 
                     </div>
                     <div className="flex items-baseline gap-2">
                         <h3 className="text-3xl font-bold text-green-900">
-                            {aiData?.potentialRevenue || `AED ${estimatedCurrentRevenue.toLocaleString()}`}
+                            {aiData?.potentialRevenue || `${currency} ${estimatedCurrentRevenue.toLocaleString()}`}
                         </h3>
                         {aiData?.maxCbm && (
                             <span className="text-xs text-green-700 font-medium">

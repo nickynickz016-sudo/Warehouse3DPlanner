@@ -12,7 +12,7 @@ import { getAIOptimization } from './services/geminiService';
 import { supabase } from './services/supabaseClient';
 import { generateWarehouseReport } from './services/pdfService';
 import QRCode from 'qrcode';
-import { LayoutTemplate, Cuboid, Download, Lock, Unlock, UserCircle, Sparkles, Building2, Plus, Trash2, ChevronDown, Cloud, CloudOff, RefreshCw, CheckCircle, Loader2, ChevronLeft, ChevronRight, Menu, Copy, Maximize, Minimize, Search, Box, X, Grid, Clock, Coins, Calendar, QrCode, Activity, Globe } from 'lucide-react';
+import { LayoutTemplate, Cuboid, Download, Lock, Unlock, UserCircle, Sparkles, Building2, Plus, Trash2, ChevronDown, Cloud, CloudOff, RefreshCw, CheckCircle, Loader2, ChevronLeft, ChevronRight, Menu, Copy, Maximize, Minimize, Search, Box, X, Grid, Clock, Coins, Calendar, QrCode, Activity, Globe, Layers } from 'lucide-react';
 
 const App: React.FC = () => {
   // App Initialization State
@@ -119,6 +119,7 @@ const App: React.FC = () => {
   // UI State
   const [showJobSearch, setShowJobSearch] = useState(false);
   const [showFinancials, setShowFinancials] = useState(false);
+  const [financialModalTab, setFinancialModalTab] = useState<'floors' | 'summary'>('floors');
   
   // Delete Warehouse Confirmation
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -284,13 +285,15 @@ const App: React.FC = () => {
     if (selectedItemIds.length === 0 || !isAdmin) return;
     const branchInfo = config.branch ? (BRANCH_MAP[config.branch] || BRANCH_MAP['UAE']) : BRANCH_MAP['UAE'];
     const autoNum = Math.floor(1000 + Math.random() * 9000).toString();
+    const activeLevel = config.levels.find(l => l.id === config.activeLevelId);
+    const floorPricePerCbm = activeLevel?.pricePerCbm ?? config.pricePerCbm ?? 25;
     const newJob: JobEntry = {
         id: `job-${Date.now()}`,
         jobNumber: autoNum,
         shipperName: `Shipper #${branchInfo.jobPrefix}${autoNum}`,
         inDate: new Date().toISOString().split('T')[0],
         outDate: '',
-        pricePerMonth: config.pricePerCbm * 5 || 250,
+        pricePerMonth: (floorPricePerCbm * 5) || 250,
         cbm: 5,
         storageType: 'SIT',
         paymentCycle: 'Monthly',
@@ -510,33 +513,105 @@ const App: React.FC = () => {
 
   const selectedItem = selectedItemIds.length === 1 ? items.find(i => i.id === selectedItemIds[0]) : null;
   
-  // Financial Calculations
+  // Financial Calculations (Overall & Per-Floor Breakdowns)
   const financialTotals = useMemo(() => {
     let monthly = 0;
     let quarterly = 0;
     let yearly = 0;
     let totalCbm = 0;
     let activeJobs = 0;
+    let totalTargetRevenue = 0;
+    let totalOperatingCost = 0;
+    let totalPotentialCapacityRevenue = 0;
 
-    config.levels.forEach(level => {
+    const floorBreakdowns = config.levels.map(level => {
+      let fMonthly = 0;
+      let fQuarterly = 0;
+      let fYearly = 0;
+      let fTotalCbm = 0;
+      let fActiveJobs = 0;
+
       level.items.forEach(item => {
         if (item.rackDetails?.jobs) {
           item.rackDetails.jobs.forEach(job => {
-            const price = job.pricePerMonth || 0;
-            const cycle = job.paymentCycle || 'Monthly';
-            
-            if (cycle === 'Monthly') monthly += price;
-            else if (cycle === 'Quarterly') quarterly += price;
-            else if (cycle === 'Yearly') yearly += price;
+            if (job.status === 'active') {
+              const price = job.pricePerMonth || 0;
+              const cycle = job.paymentCycle || 'Monthly';
+              
+              if (cycle === 'Monthly') {
+                monthly += price;
+                fMonthly += price;
+              } else if (cycle === 'Quarterly') {
+                quarterly += price;
+                fQuarterly += price;
+              } else if (cycle === 'Yearly') {
+                yearly += price;
+                fYearly += price;
+              }
 
-            totalCbm += (job.cbm || 0);
-            activeJobs++;
+              totalCbm += (job.cbm || 0);
+              fTotalCbm += (job.cbm || 0);
+              activeJobs++;
+              fActiveJobs++;
+            }
           });
         }
       });
+
+      const fPrice = level.pricePerCbm ?? config.pricePerCbm ?? 25;
+      const fCapacity = level.totalVolumeCapacity || 0;
+      const fPotential = fCapacity * fPrice;
+      const fTarget = level.targetRevenue !== undefined ? level.targetRevenue : Math.round(fPotential * ((level.targetOccupancyRate ?? 85) / 100));
+      const fCost = level.operatingCost ?? 0;
+      const fNormalized = fMonthly + (fQuarterly / 3) + (fYearly / 12);
+      const fProfitTarget = fTarget - fCost;
+      const fActualProfit = fNormalized - fCost;
+      const fAchievement = fTarget > 0 ? Math.min(999, Math.round((fNormalized / fTarget) * 100)) : 0;
+      const fOccupancy = fCapacity > 0 ? Math.min(100, Math.round((fTotalCbm / fCapacity) * 100)) : 0;
+
+      totalTargetRevenue += fTarget;
+      totalOperatingCost += fCost;
+      totalPotentialCapacityRevenue += fPotential;
+
+      return {
+        levelId: level.id,
+        levelName: level.name,
+        pricePerCbm: fPrice,
+        monthly: fMonthly,
+        quarterly: fQuarterly,
+        yearly: fYearly,
+        normalizedMonthly: Math.round(fNormalized),
+        totalCbm: Math.round(fTotalCbm * 100) / 100,
+        capacity: fCapacity,
+        occupancyPercent: fOccupancy,
+        targetRevenue: fTarget,
+        operatingCost: fCost,
+        targetProfit: fProfitTarget,
+        actualProfit: Math.round(fActualProfit),
+        potentialRevenue: fPotential,
+        achievementPercent: fAchievement,
+        activeJobs: fActiveJobs
+      };
     });
 
-    return { monthly, quarterly, yearly, totalCbm, activeJobs };
+    const normalizedTotal = monthly + (quarterly / 3) + (yearly / 12);
+    const overallAchievement = totalTargetRevenue > 0 ? Math.min(999, Math.round((normalizedTotal / totalTargetRevenue) * 100)) : 0;
+
+    return { 
+      monthly, 
+      quarterly, 
+      yearly, 
+      normalizedTotal: Math.round(normalizedTotal),
+      totalCbm: Math.round(totalCbm * 100) / 100, 
+      activeJobs,
+      totalTargetRevenue,
+      totalOperatingCost,
+      totalTargetProfit: totalTargetRevenue - totalOperatingCost,
+      totalActualProfit: Math.round(normalizedTotal - totalOperatingCost),
+      totalPotentialCapacityRevenue,
+      overallAchievement,
+      floorBreakdowns 
+    };
   }, [config]);
 
   // Public View State
@@ -1991,122 +2066,305 @@ const App: React.FC = () => {
       })()}
 
       {/* Financial Summary Modal */}
-      {showFinancials && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-md p-4">
-              <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden border border-gray-200 animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
-                  {/* Header */}
-                  <div className="bg-brand-primary p-6 text-white flex justify-between items-center shrink-0 border-b-4 border-brand-accent">
-                      <div className="flex items-center gap-3">
-                          <div className="p-2 bg-brand-accent rounded-lg">
-                              <Coins size={24} className="text-black" />
-                          </div>
-                          <div>
-                              <h2 className="text-xl font-black uppercase tracking-widest">{config.name} Financials</h2>
-                              <p className="text-[10px] font-bold text-brand-accent uppercase tracking-[0.2em] opacity-80">Billing & Revenue Summary</p>
-                          </div>
-                      </div>
-                      <button onClick={() => setShowFinancials(false)} className="hover:bg-white/10 p-2 rounded-full transition-colors">
-                          <X size={24} />
-                      </button>
-                  </div>
-
-                  <div className="p-8 overflow-y-auto custom-scrollbar space-y-8">
-                      {/* Top KPIs */}
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                           <div className="bg-blue-50 border border-blue-100 p-6 rounded-2xl text-center md:text-left">
-                               <div className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1">Active Shipper Jobs</div>
-                               <div className="text-4xl font-serif font-black text-blue-900">{financialTotals.activeJobs}</div>
-                           </div>
-                           <div className="bg-brand-accent/10 border border-brand-accent/20 p-6 rounded-2xl text-center md:text-left">
-                               <div className="text-[10px] font-black text-brand-primary uppercase tracking-widest mb-1">Total Occupied CBM</div>
-                               <div className="text-4xl font-serif font-black text-brand-primary">{financialTotals.totalCbm.toFixed(2)}</div>
-                           </div>
-                           <div className="bg-gray-50 border border-gray-200 p-6 rounded-2xl text-center md:text-left">
-                               <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Normalized Monthly</div>
-                               <div className="text-4xl font-serif font-black text-gray-900">
-                                   {(financialTotals.monthly + (financialTotals.quarterly / 3) + (financialTotals.yearly / 12)).toLocaleString()}
-                                   <span className="text-xs font-sans font-bold ml-1 opacity-40 uppercase">AED</span>
-                               </div>
-                           </div>
-                      </div>
-
-                      {/* Main Billing Tiers */}
-                      <div className="space-y-4">
-                          <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest border-b pb-2">Revenue Streams by Billing Cycle</h3>
-                          
-                          <div className="grid grid-cols-1 gap-4">
-                              {/* Monthly */}
-                              <div className="flex flex-col sm:flex-row items-center justify-between p-6 bg-white border-2 border-gray-100 rounded-2xl hover:border-brand-accent transition-all group">
-                                  <div className="flex items-center gap-4 mb-4 sm:mb-0">
-                                      <div className="w-12 h-12 bg-green-50 text-green-600 rounded-xl flex items-center justify-center font-black text-lg">M</div>
-                                      <div>
-                                          <div className="text-lg font-black text-gray-900 uppercase">Monthly Billing</div>
-                                          <div className="text-[10px] font-bold text-gray-400 uppercase">Total collected from monthly contracts</div>
-                                      </div>
-                                  </div>
-                                  <div className="text-center sm:text-right">
-                                      <div className="text-3xl font-serif font-black text-green-700">{financialTotals.monthly.toLocaleString()}</div>
-                                      <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">AED / MONTH</div>
-                                  </div>
+      {showFinancials && (() => {
+          const currentCurrency = currentBranchInfo.currency || 'AED';
+          return (
+              <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 backdrop-blur-md p-3 sm:p-4 animate-in fade-in">
+                  <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full overflow-hidden border border-gray-200 animate-in zoom-in-95 duration-200 flex flex-col max-h-[92vh]">
+                      {/* Header */}
+                      <div className="bg-brand-primary p-5 sm:p-6 text-white flex justify-between items-center shrink-0 border-b-4 border-brand-accent">
+                          <div className="flex items-center gap-3">
+                              <div className="p-2.5 bg-brand-accent rounded-xl text-black shadow-sm">
+                                  <Coins size={26} className="text-black" />
                               </div>
-
-                              {/* Quarterly */}
-                              <div className="flex flex-col sm:flex-row items-center justify-between p-6 bg-white border-2 border-gray-100 rounded-2xl hover:border-brand-accent transition-all group">
-                                  <div className="flex items-center gap-4 mb-4 sm:mb-0">
-                                      <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center font-black text-lg">Q</div>
-                                      <div>
-                                          <div className="text-lg font-black text-gray-900 uppercase">Quarterly Billing</div>
-                                          <div className="text-[10px] font-bold text-gray-400 uppercase">Total collected per quarter</div>
-                                      </div>
-                                  </div>
-                                  <div className="text-center sm:text-right">
-                                      <div className="text-3xl font-serif font-black text-blue-700">{financialTotals.quarterly.toLocaleString()}</div>
-                                      <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">AED / QUARTER</div>
-                                  </div>
-                              </div>
-
-                              {/* Yearly */}
-                              <div className="flex flex-col sm:flex-row items-center justify-between p-6 bg-white border-2 border-gray-100 rounded-2xl hover:border-brand-accent transition-all group">
-                                  <div className="flex items-center gap-4 mb-4 sm:mb-0">
-                                      <div className="w-12 h-12 bg-brand-primary rounded-xl flex items-center justify-center font-black text-lg text-brand-accent border-2 border-brand-accent">Y</div>
-                                      <div>
-                                          <div className="text-lg font-black text-gray-900 uppercase">Yearly Billing</div>
-                                          <div className="text-[10px] font-bold text-gray-400 uppercase">Total annual contract values</div>
-                                      </div>
-                                  </div>
-                                  <div className="text-center sm:text-right">
-                                      <div className="text-3xl font-serif font-black text-brand-primary">{financialTotals.yearly.toLocaleString()}</div>
-                                      <div className="text-[10px] font-bold text-brand-primary uppercase tracking-widest">AED / YEAR</div>
-                                  </div>
+                              <div>
+                                  <h2 className="text-lg sm:text-xl font-black uppercase tracking-widest">{config.name} Financial Report</h2>
+                                  <p className="text-[10px] font-bold text-brand-accent uppercase tracking-[0.2em] opacity-90">
+                                      {currentBranchInfo.name} • Floor-by-Floor Financial Goals & Billing
+                                  </p>
                               </div>
                           </div>
+                          <button onClick={() => setShowFinancials(false)} className="hover:bg-white/10 p-2 rounded-full transition-colors text-white">
+                              <X size={22} />
+                          </button>
                       </div>
 
-                      {/* Summary Advice */}
-                      <div className="bg-gray-900 text-white p-6 rounded-2xl relative overflow-hidden">
-                          <div className="relative z-10 text-center sm:text-left">
-                              <h4 className="text-brand-accent font-black text-xs uppercase tracking-widest mb-2 flex items-center justify-center sm:justify-start gap-2">
-                                  <Sparkles size={14} /> Financial Insight
-                              </h4>
-                              <p className="text-sm font-medium leading-relaxed opacity-90">
-                                  Your current warehouse design achieves a normalized monthly revenue of <span className="font-black text-brand-accent">{(financialTotals.monthly + (financialTotals.quarterly / 3) + (financialTotals.yearly / 12)).toLocaleString()} AED</span>. 
-                                  To increase profitability, consider converting <span className="underline decoration-brand-accent">Low Density Zones</span> into <span className="font-bold">Mezzanine Racking</span> systems.
-                              </p>
+                      {/* Modal Subnav Tabs */}
+                      <div className="bg-gray-50 border-b border-gray-200 px-6 pt-3 flex gap-2 shrink-0 overflow-x-auto text-xs">
+                          <button
+                              onClick={() => setFinancialModalTab('floors')}
+                              className={`pb-2.5 px-3 font-bold border-b-2 transition-all flex items-center gap-1.5 ${
+                                  financialModalTab === 'floors'
+                                      ? 'border-brand-primary text-brand-primary'
+                                      : 'border-transparent text-gray-500 hover:text-gray-900'
+                              }`}
+                          >
+                              <Layers size={14} className="text-amber-600" />
+                              <span>Floor-by-Floor Breakdown ({config.levels.length})</span>
+                          </button>
+                          <button
+                              onClick={() => setFinancialModalTab('summary')}
+                              className={`pb-2.5 px-3 font-bold border-b-2 transition-all flex items-center gap-1.5 ${
+                                  financialModalTab === 'summary'
+                                      ? 'border-brand-primary text-brand-primary'
+                                      : 'border-transparent text-gray-500 hover:text-gray-900'
+                              }`}
+                          >
+                              <Coins size={14} className="text-brand-primary" />
+                              <span>Warehouse Revenue Streams & Cycles</span>
+                          </button>
+                      </div>
+
+                      <div className="p-5 sm:p-8 overflow-y-auto custom-scrollbar space-y-6">
+                          {/* Top KPIs Summary */}
+                          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                              <div className="bg-blue-50/80 border border-blue-100 p-4 rounded-xl">
+                                  <div className="text-[9px] font-black text-blue-500 uppercase tracking-widest mb-1">Active Shipper Jobs</div>
+                                  <div className="text-2xl sm:text-3xl font-serif font-black text-blue-900">{financialTotals.activeJobs}</div>
+                                  <div className="text-[10px] text-blue-700 mt-1 font-medium">{config.levels.length} warehouse levels</div>
+                              </div>
+                              <div className="bg-amber-50/80 border border-amber-200 p-4 rounded-xl">
+                                  <div className="text-[9px] font-black text-amber-800 uppercase tracking-widest mb-1">Total Occupied Volume</div>
+                                  <div className="text-2xl sm:text-3xl font-serif font-black text-amber-950 font-mono">{financialTotals.totalCbm.toFixed(1)} <span className="text-sm font-sans">m³</span></div>
+                                  <div className="text-[10px] text-amber-800 mt-1 font-medium">All active loads</div>
+                              </div>
+                              <div className="bg-emerald-50/80 border border-emerald-200 p-4 rounded-xl">
+                                  <div className="text-[9px] font-black text-emerald-700 uppercase tracking-widest mb-1">Actual Monthly Yield</div>
+                                  <div className="text-2xl sm:text-3xl font-serif font-black text-emerald-900 font-mono">
+                                      {financialTotals.normalizedTotal.toLocaleString()}
+                                      <span className="text-xs font-sans font-bold ml-1 opacity-70 uppercase">{currentCurrency}</span>
+                                  </div>
+                                  <div className="text-[10px] text-emerald-800 mt-1 font-medium font-mono">{financialTotals.overallAchievement}% of warehouse target</div>
+                              </div>
+                              <div className="bg-purple-50/80 border border-purple-200 p-4 rounded-xl">
+                                  <div className="text-[9px] font-black text-purple-700 uppercase tracking-widest mb-1">Combined Monthly Target</div>
+                                  <div className="text-2xl sm:text-3xl font-serif font-black text-purple-900 font-mono">
+                                      {financialTotals.totalTargetRevenue.toLocaleString()}
+                                      <span className="text-xs font-sans font-bold ml-1 opacity-70 uppercase">{currentCurrency}</span>
+                                  </div>
+                                  <div className="text-[10px] text-purple-800 mt-1 font-medium">Net Profit Target: {currentCurrency} {financialTotals.totalTargetProfit.toLocaleString()}</div>
+                              </div>
                           </div>
-                          <div className="absolute top-0 right-0 p-4 opacity-10 hidden sm:block">
-                              <Coins size={80} />
+
+                          {/* TAB 1: FLOOR BY FLOOR BREAKDOWN */}
+                          {financialModalTab === 'floors' && (
+                              <div className="space-y-4 animate-in fade-in">
+                                  <div className="flex items-center justify-between border-b border-gray-200 pb-2">
+                                      <div>
+                                          <h3 className="text-xs font-black text-gray-800 uppercase tracking-widest">
+                                              Floor-Specific Financial Performance
+                                          </h3>
+                                          <p className="text-[11px] text-gray-500">
+                                              Individual rate, target revenue, operating overhead, and actual yields for each floor
+                                          </p>
+                                      </div>
+                                      <span className="text-xs font-mono font-black text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded-full">
+                                          Total Goal: {currentCurrency} {financialTotals.totalTargetRevenue.toLocaleString()}
+                                      </span>
+                                  </div>
+
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                      {financialTotals.floorBreakdowns.map((floor, idx) => {
+                                          const isCanvasActive = config.activeLevelId === floor.levelId;
+                                          return (
+                                              <div 
+                                                  key={floor.levelId} 
+                                                  className={`p-4 rounded-2xl border transition-all ${
+                                                      isCanvasActive 
+                                                          ? 'bg-amber-50/30 border-brand-accent ring-2 ring-brand-accent/30 shadow-md' 
+                                                          : 'bg-white border-gray-200 hover:border-gray-300 shadow-xs'
+                                                  }`}
+                                              >
+                                                  {/* Floor Header */}
+                                                  <div className="flex items-center justify-between mb-3">
+                                                      <div className="flex items-center gap-2">
+                                                          <span className="w-6 h-6 rounded-lg bg-brand-primary text-brand-accent font-mono font-black text-xs flex items-center justify-center">
+                                                              {idx + 1}
+                                                          </span>
+                                                          <div>
+                                                              <div className="font-bold text-sm text-gray-900">{floor.levelName}</div>
+                                                              <div className="text-[10px] text-gray-400 font-mono">
+                                                                  Rate: <span className="font-bold text-gray-700">{currentCurrency} {floor.pricePerCbm}/m³</span> • Capacity: {floor.capacity} m³
+                                                              </div>
+                                                          </div>
+                                                      </div>
+
+                                                      <div className="flex items-center gap-1.5">
+                                                          {isCanvasActive ? (
+                                                              <span className="text-[9px] bg-emerald-100 text-emerald-800 font-black px-2 py-0.5 rounded-full uppercase tracking-wider">
+                                                                  Canvas Active
+                                                              </span>
+                                                          ) : (
+                                                              <button
+                                                                  onClick={() => {
+                                                                      handleUpdateConfig({ ...config, activeLevelId: floor.levelId });
+                                                                  }}
+                                                                  className="text-[10px] bg-gray-100 hover:bg-brand-accent hover:text-black font-bold px-2 py-1 rounded-md text-gray-700 transition-colors"
+                                                                  title="Switch active canvas floor"
+                                                              >
+                                                                  View on Canvas
+                                                              </button>
+                                                          )}
+                                                      </div>
+                                                  </div>
+
+                                                  {/* Financial Stats Grid */}
+                                                  <div className="grid grid-cols-2 gap-2 text-xs mb-3">
+                                                      <div className="bg-gray-50 p-2.5 rounded-xl border border-gray-100">
+                                                          <div className="text-[9px] font-bold text-gray-400 uppercase">Monthly Target Goal</div>
+                                                          <div className="text-base font-black text-gray-900 font-mono">
+                                                              {currentCurrency} {floor.targetRevenue.toLocaleString()}
+                                                          </div>
+                                                          <div className="text-[9px] text-gray-400">Yield benchmark</div>
+                                                      </div>
+
+                                                      <div className="bg-emerald-50 p-2.5 rounded-xl border border-emerald-100">
+                                                          <div className="text-[9px] font-bold text-emerald-700 uppercase">Actual Monthly Revenue</div>
+                                                          <div className="text-base font-black text-emerald-800 font-mono">
+                                                              {currentCurrency} {floor.normalizedMonthly.toLocaleString()}
+                                                          </div>
+                                                          <div className="text-[9px] text-emerald-600 font-mono">{floor.activeJobs} active shipper jobs</div>
+                                                      </div>
+
+                                                      <div className="bg-amber-50 p-2.5 rounded-xl border border-amber-100">
+                                                          <div className="text-[9px] font-bold text-amber-700 uppercase">Operating Budget</div>
+                                                          <div className="text-base font-black text-amber-900 font-mono">
+                                                              {currentCurrency} {floor.operatingCost.toLocaleString()}
+                                                          </div>
+                                                          <div className="text-[9px] text-amber-700">Floor overhead</div>
+                                                      </div>
+
+                                                      <div className="bg-blue-50 p-2.5 rounded-xl border border-blue-100">
+                                                          <div className="text-[9px] font-bold text-blue-700 uppercase">Target Net Profit</div>
+                                                          <div className="text-base font-black text-blue-900 font-mono">
+                                                              {currentCurrency} {floor.targetProfit.toLocaleString()}
+                                                          </div>
+                                                          <div className="text-[9px] text-blue-600">Net target margin</div>
+                                                      </div>
+                                                  </div>
+
+                                                  {/* Floor Progress Bars */}
+                                                  <div className="space-y-2 pt-2 border-t border-gray-100">
+                                                      {/* Revenue Goal Progress */}
+                                                      <div>
+                                                          <div className="flex justify-between text-[10px] font-bold text-gray-600 mb-0.5">
+                                                              <span>Financial Goal Achievement</span>
+                                                              <span className={floor.achievementPercent >= 100 ? 'text-emerald-700 font-black' : 'text-amber-800'}>
+                                                                  {floor.achievementPercent}%
+                                                              </span>
+                                                          </div>
+                                                          <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                                                              <div
+                                                                  className={`h-2 rounded-full transition-all duration-300 ${floor.achievementPercent >= 100 ? 'bg-emerald-500' : 'bg-brand-primary'}`}
+                                                                  style={{ width: `${Math.min(100, floor.achievementPercent)}%` }}
+                                                              />
+                                                          </div>
+                                                      </div>
+
+                                                      {/* Physical CBM Occupancy */}
+                                                      <div>
+                                                          <div className="flex justify-between text-[10px] font-bold text-gray-600 mb-0.5">
+                                                              <span>Volume Utilization</span>
+                                                              <span>{floor.totalCbm} m³ / {floor.capacity} m³ ({floor.occupancyPercent}%)</span>
+                                                          </div>
+                                                          <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+                                                              <div
+                                                                  className={`h-1.5 rounded-full transition-all duration-300 ${floor.occupancyPercent > 90 ? 'bg-red-500' : 'bg-brand-accent'}`}
+                                                                  style={{ width: `${Math.min(100, floor.occupancyPercent)}%` }}
+                                                              />
+                                                          </div>
+                                                      </div>
+                                                  </div>
+                                              </div>
+                                          );
+                                      })}
+                                  </div>
+                              </div>
+                          )}
+
+                          {/* TAB 2: OVERALL BILLING TIERS */}
+                          {financialModalTab === 'summary' && (
+                              <div className="space-y-4 animate-in fade-in">
+                                  <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest border-b pb-2">Revenue Streams by Billing Cycle</h3>
+                                  
+                                  <div className="grid grid-cols-1 gap-4">
+                                      {/* Monthly */}
+                                      <div className="flex flex-col sm:flex-row items-center justify-between p-6 bg-white border-2 border-gray-100 rounded-2xl hover:border-brand-accent transition-all group">
+                                          <div className="flex items-center gap-4 mb-4 sm:mb-0">
+                                              <div className="w-12 h-12 bg-green-50 text-green-600 rounded-xl flex items-center justify-center font-black text-lg">M</div>
+                                              <div>
+                                                  <div className="text-lg font-black text-gray-900 uppercase">Monthly Billing</div>
+                                                  <div className="text-[10px] font-bold text-gray-400 uppercase">Total collected from monthly contracts</div>
+                                              </div>
+                                          </div>
+                                          <div className="text-center sm:text-right">
+                                              <div className="text-3xl font-serif font-black text-green-700">{financialTotals.monthly.toLocaleString()}</div>
+                                              <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{currentCurrency} / MONTH</div>
+                                          </div>
+                                      </div>
+
+                                      {/* Quarterly */}
+                                      <div className="flex flex-col sm:flex-row items-center justify-between p-6 bg-white border-2 border-gray-100 rounded-2xl hover:border-brand-accent transition-all group">
+                                          <div className="flex items-center gap-4 mb-4 sm:mb-0">
+                                              <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center font-black text-lg">Q</div>
+                                              <div>
+                                                  <div className="text-lg font-black text-gray-900 uppercase">Quarterly Billing</div>
+                                                  <div className="text-[10px] font-bold text-gray-400 uppercase">Total collected per quarter</div>
+                                              </div>
+                                          </div>
+                                          <div className="text-center sm:text-right">
+                                              <div className="text-3xl font-serif font-black text-blue-700">{financialTotals.quarterly.toLocaleString()}</div>
+                                              <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{currentCurrency} / QUARTER</div>
+                                          </div>
+                                      </div>
+
+                                      {/* Yearly */}
+                                      <div className="flex flex-col sm:flex-row items-center justify-between p-6 bg-white border-2 border-gray-100 rounded-2xl hover:border-brand-accent transition-all group">
+                                          <div className="flex items-center gap-4 mb-4 sm:mb-0">
+                                              <div className="w-12 h-12 bg-brand-primary rounded-xl flex items-center justify-center font-black text-lg text-brand-accent border-2 border-brand-accent">Y</div>
+                                              <div>
+                                                  <div className="text-lg font-black text-gray-900 uppercase">Yearly Billing</div>
+                                                  <div className="text-[10px] font-bold text-gray-400 uppercase">Total annual contract values</div>
+                                              </div>
+                                          </div>
+                                          <div className="text-center sm:text-right">
+                                              <div className="text-3xl font-serif font-black text-brand-primary">{financialTotals.yearly.toLocaleString()}</div>
+                                              <div className="text-[10px] font-bold text-brand-primary uppercase tracking-widest">{currentCurrency} / YEAR</div>
+                                          </div>
+                                      </div>
+                                  </div>
+                              </div>
+                          )}
+
+                          {/* Summary Advice */}
+                          <div className="bg-gray-900 text-white p-6 rounded-2xl relative overflow-hidden">
+                              <div className="relative z-10 text-center sm:text-left">
+                                  <h4 className="text-brand-accent font-black text-xs uppercase tracking-widest mb-2 flex items-center justify-center sm:justify-start gap-2">
+                                      <Sparkles size={14} /> Financial Insight & Yield Optimization
+                                  </h4>
+                                  <p className="text-sm font-medium leading-relaxed opacity-90">
+                                      Your current warehouse design achieves a normalized monthly revenue of <span className="font-black text-brand-accent">{financialTotals.normalizedTotal.toLocaleString()} {currentCurrency}</span> across {config.levels.length} configured floors. 
+                                      You can customize each floor's pricing and revenue targets independently in the <b>Floor Financial Goals</b> sidebar.
+                                  </p>
+                              </div>
+                              <div className="absolute top-0 right-0 p-4 opacity-10 hidden sm:block">
+                                  <Coins size={80} />
+                              </div>
                           </div>
                       </div>
-                  </div>
 
-                  <div className="p-6 bg-gray-50 border-t border-gray-200 flex justify-end shrink-0">
-                      <button onClick={() => setShowFinancials(false)} className="w-full sm:w-auto px-10 py-3 bg-brand-primary text-white font-black uppercase tracking-widest rounded-xl hover:bg-black transition-all shadow-lg active:scale-95">
-                          Close Report
-                      </button>
+                      <div className="p-4 sm:p-6 bg-gray-50 border-t border-gray-200 flex flex-col sm:flex-row justify-between items-center gap-3 shrink-0">
+                          <div className="text-xs text-gray-500 font-medium">
+                              Warehouse Baseline Rate: <span className="font-bold text-gray-800">{currentCurrency} {config.pricePerCbm}/m³</span>
+                          </div>
+                          <button onClick={() => setShowFinancials(false)} className="w-full sm:w-auto px-10 py-3 bg-brand-primary text-white font-black uppercase tracking-widest rounded-xl hover:bg-black transition-all shadow-lg active:scale-95">
+                              Close Report
+                          </button>
+                      </div>
                   </div>
               </div>
-          </div>
-      )}
+          );
+      })()}
 
       {/* Custom Delete Confirmation Modal */}
       {showJobDeleteConfirm && (

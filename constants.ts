@@ -33,7 +33,11 @@ export const DEFAULT_CONFIG: WarehouseConfig = {
       elevation: 0,
       height: 400, // cm
       totalVolumeCapacity: 1000, // Default m3
-      items: [] // Will be auto-populated on init
+      items: [], // Will be auto-populated on init
+      pricePerCbm: 25,
+      targetRevenue: 21250,
+      operatingCost: 6500,
+      targetOccupancyRate: 85
     }
   ],
   activeLevelId: 'ground',

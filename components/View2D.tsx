@@ -259,15 +259,17 @@ const ItemsLayer = React.memo(({ items, selectedItemIds, onMouseDown, labelFontS
                                         className="font-bold text-black leading-tight break-words px-1"
                                         style={{ fontSize: `${labelFontSize}px` }}
                                     >
-                                        {item.rackDetails?.jobs && item.rackDetails.jobs.length > 0 
-                                            ? (item.rackDetails.jobs.length === 1 
-                                                ? (item.rackDetails.jobs[0].shipperName 
-                                                    || (item.rackDetails.jobs[0].jobNumber ? `${jobPrefix}${item.rackDetails.jobs[0].jobNumber}` : '')
-                                                    || (item.rackDetails.status === 'occupied' ? `${item.label || 'Unit'} [Job]` : (item.label || ''))) 
-                                                : `${item.rackDetails.jobs.length} Jobs`)
-                                            : (item.rackDetails?.shipperName 
-                                                || (item.rackDetails?.jobNumber ? `${jobPrefix}${item.rackDetails.jobNumber}` : '')
-                                                || (item.rackDetails?.status === 'occupied' ? `${item.label || 'Unit'} [Occupied]` : (item.label || '')))}
+                                        {item.type === 'open_cabin'
+                                            ? (item.label || 'CABIN')
+                                            : (item.rackDetails?.jobs && item.rackDetails.jobs.length > 0 
+                                                ? (item.rackDetails.jobs.length === 1 
+                                                    ? (item.rackDetails.jobs[0].shipperName 
+                                                        || (item.rackDetails.jobs[0].jobNumber ? `${jobPrefix}${item.rackDetails.jobs[0].jobNumber}` : '')
+                                                        || (item.rackDetails.status === 'occupied' ? `${item.label || 'Unit'} [Job]` : (item.label || ''))) 
+                                                    : `${item.rackDetails.jobs.length} Jobs`)
+                                                : (item.rackDetails?.shipperName 
+                                                    || (item.rackDetails?.jobNumber ? `${jobPrefix}${item.rackDetails.jobNumber}` : '')
+                                                    || (item.rackDetails.status === 'occupied' ? `${item.label || 'Unit'} [Occupied]` : (item.label || ''))))}
                                     </span>
                                     {(item.type === 'rack' || item.type === 'temp_storage') && item.rackDetails?.salesPerson && (
                                         <span 
@@ -661,9 +663,12 @@ const View2D: React.FC<Props> = ({
 
       {/* --- Top Info & Quick Selection Bar --- */}
       <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-white/95 backdrop-blur-md px-3 py-1.5 rounded-full text-xs font-semibold text-gray-700 z-20 border border-gray-300 shadow-md flex items-center gap-2 max-w-[90vw] overflow-x-auto custom-scrollbar">
-        <span className="font-bold text-gray-800 shrink-0 px-2 py-0.5 bg-gray-100 rounded-md border border-gray-200">
-          Floor: {activeLevel?.name}
-        </span>
+        <div className="font-bold text-gray-800 shrink-0 px-2 py-0.5 bg-gray-100 rounded-md border border-gray-200 flex items-center gap-1.5">
+          <span>Floor: {activeLevel?.name}</span>
+          <span className="text-[10px] text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded font-mono font-bold border border-amber-200" title="Active Floor Target Price per CBM">
+            {config.branch ? (BRANCH_MAP[config.branch]?.currency || 'AED') : 'AED'} {activeLevel?.pricePerCbm ?? config.pricePerCbm ?? 25}/m³
+          </span>
+        </div>
 
         {isAdmin ? (
           <div className="flex items-center gap-1.5">

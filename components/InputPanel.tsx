@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { WarehouseConfig, Level, StorageStats, GeminiOptimizationResult, BRANCH_MAP, BRANCH_LIST, BranchCode, StorageType, ForkliftType } from '../types';
-import { calculateDimensionsFromArea, getLevelOccupiedCbm } from '../services/warehouseLogic';
-import { Settings, Truck, Box, Ruler, Thermometer, Layers, Plus, Trash2, Database, Eye, Check, Lock, Coins, TrendingUp, Edit2, Eraser, Save, BarChart3, ChevronDown, ChevronUp, Package, Maximize, Sparkles, Building2, Globe, Warehouse } from 'lucide-react';
+import { calculateDimensionsFromArea, getLevelOccupiedCbm, getLevelFinancialSummary, getLevelMonthlyRevenue } from '../services/warehouseLogic';
+import { Settings, Truck, Box, Ruler, Thermometer, Layers, Plus, Trash2, Database, Eye, Check, Lock, Coins, TrendingUp, Edit2, Eraser, Save, BarChart3, ChevronDown, ChevronUp, Package, Maximize, Sparkles, Building2, Globe, Warehouse, Target, DollarSign, Calculator, Percent, ArrowUpRight, Copy } from 'lucide-react';
 
 interface Props {
   config: WarehouseConfig;
@@ -18,6 +18,8 @@ interface Props {
 
 const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizing, isAdmin, onSave, stats, aiResult, isStatsOpen, onToggleStats }) => {
   const currency = config.branch ? (BRANCH_MAP[config.branch]?.currency || 'AED') : 'AED';
+  const [selectedFloorForFinance, setSelectedFloorForFinance] = useState<string>('all');
+  const [copiedPriceNotice, setCopiedPriceNotice] = useState<string | null>(null);
 
   const handleChange = (field: keyof WarehouseConfig | string, value: any) => {
     if (!isAdmin) return;
@@ -47,13 +49,19 @@ const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizin
 
   const addLevel = () => {
     if (!isAdmin) return;
+    const defaultPrice = config.pricePerCbm || 25;
+    const defaultCap = 1000;
     const newLevel: Level = {
       id: `level-${Date.now()}`,
       name: `Level ${config.levels.length + 1}`,
       elevation: config.levels.length * 400, // 4m
       height: 400, // 4m
-      totalVolumeCapacity: 1000, // Default m3
-      items: []
+      totalVolumeCapacity: defaultCap, // Default m3
+      items: [],
+      pricePerCbm: defaultPrice,
+      targetRevenue: Math.round(defaultCap * defaultPrice * 0.85),
+      operatingCost: 6500,
+      targetOccupancyRate: 85
     };
     const newConfig = { ...config, levels: [...config.levels, newLevel], activeLevelId: newLevel.id };
     onChange(newConfig);
@@ -218,25 +226,540 @@ const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizin
             )}
         </section>
 
-        {/* Financials */}
-        <section className="bg-yellow-50 p-3 rounded-lg border border-yellow-200">
-             <h3 className="text-sm font-semibold text-black uppercase tracking-wider mb-3 flex items-center gap-2">
-                <Coins size={16} className="text-brand-accent fill-black" /> Financial Goals
-            </h3>
-            <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">Target Price per CBM ({currency})</label>
-                <div className="relative">
-                    <span className="absolute left-3 top-2 text-sm text-gray-500 font-bold">{currency}</span>
-                    <input 
-                        type="number" 
+        {/* Per-Floor Financial Goals */}
+        <section className="bg-gradient-to-br from-yellow-50 to-amber-50/70 p-3.5 rounded-xl border border-yellow-200 shadow-xs">
+            <div className="flex items-center justify-between mb-2.5">
+                <h3 className="text-sm font-black text-black uppercase tracking-wider flex items-center gap-2">
+                    <Coins size={16} className="text-brand-accent fill-black" /> Floor Financial Goals
+                </h3>
+                <span className="text-[10px] font-black bg-amber-200/90 text-amber-900 px-2 py-0.5 rounded-full uppercase tracking-wider border border-amber-300">
+                    {config.levels.length} {config.levels.length === 1 ? 'Floor' : 'Floors'}
+                </span>
+            </div>
+
+            {copiedPriceNotice && (
+                <div className="mb-2.5 text-xs bg-emerald-100 text-emerald-900 border border-emerald-300 px-2.5 py-1 rounded-md font-bold flex items-center gap-1.5 animate-in fade-in">
+                    <Check size={14} className="text-emerald-700" /> {copiedPriceNotice}
+                </div>
+            )}
+
+            {/* Floor Navigation Strip */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 mb-3 custom-scrollbar text-xs">
+                <button
+                    type="button"
+                    onClick={() => setSelectedFloorForFinance('all')}
+                    className={`px-2.5 py-1.5 rounded-lg font-bold shrink-0 transition-all text-xs flex items-center gap-1.5 ${
+                        selectedFloorForFinance === 'all'
+                            ? 'bg-brand-primary text-brand-accent shadow-sm'
+                            : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'
+                    }`}
+                >
+                    <Building2 size={12} /> All Floors Overview
+                </button>
+                {config.levels.map(l => {
+                    const isSelected = selectedFloorForFinance === l.id;
+                    const isCanvasActive = config.activeLevelId === l.id;
+                    const floorSummary = getLevelFinancialSummary(l, config.pricePerCbm);
+                    return (
+                        <button
+                            key={l.id}
+                            type="button"
+                            onClick={() => setSelectedFloorForFinance(l.id)}
+                            className={`px-2.5 py-1.5 rounded-lg font-bold shrink-0 transition-all text-xs flex items-center gap-1.5 ${
+                                isSelected
+                                    ? 'bg-brand-primary text-brand-accent shadow-sm'
+                                    : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'
+                            }`}
+                        >
+                            <span>{l.name}</span>
+                            <span className="text-[10px] font-mono opacity-80 font-normal">
+                                {currency} {floorSummary.pricePerCbm}
+                            </span>
+                            {isCanvasActive && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" title="Active Canvas Floor" />
+                            )}
+                        </button>
+                    );
+                })}
+            </div>
+
+            {/* VIEW MODE: ALL FLOORS OVERVIEW */}
+            {selectedFloorForFinance === 'all' && (() => {
+                const totals = config.levels.reduce((acc, level) => {
+                    const s = getLevelFinancialSummary(level, config.pricePerCbm);
+                    acc.targetRevenue += s.targetRevenue;
+                    acc.actualMonthlyRevenue += s.actualMonthlyRevenue;
+                    acc.operatingCost += s.operatingCost;
+                    acc.totalCapacity += s.totalVolumeCapacity;
+                    acc.occupiedCbm += s.occupiedCbm;
+                    acc.potentialRevenue += s.potentialCapacityRevenue;
+                    return acc;
+                }, {
+                    targetRevenue: 0,
+                    actualMonthlyRevenue: 0,
+                    operatingCost: 0,
+                    totalCapacity: 0,
+                    occupiedCbm: 0,
+                    potentialRevenue: 0
+                });
+
+                const totalTargetProfit = totals.targetRevenue - totals.operatingCost;
+                const totalActualProfit = totals.actualMonthlyRevenue - totals.operatingCost;
+                const totalAchievement = totals.targetRevenue > 0
+                    ? Math.min(999, Math.round((totals.actualMonthlyRevenue / totals.targetRevenue) * 100))
+                    : 0;
+
+                return (
+                    <div className="space-y-3">
+                        {/* Warehouse Combined Financial Summary Card */}
+                        <div className="bg-white rounded-xl p-3 border border-yellow-300/80 shadow-xs space-y-2">
+                            <div className="flex items-center justify-between text-xs border-b border-gray-100 pb-2">
+                                <span className="font-bold text-gray-700 uppercase tracking-wider text-[10px] flex items-center gap-1">
+                                    <Target size={12} className="text-amber-600" /> Combined Warehouse Goals
+                                </span>
+                                <span className="font-mono font-black text-amber-800 text-[11px]">
+                                    {totalAchievement}% Achieved
+                                </span>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div className="bg-gray-50 p-2 rounded-lg border border-gray-100">
+                                    <div className="text-[9px] font-bold text-gray-500 uppercase">Total Monthly Target</div>
+                                    <div className="text-sm font-black text-gray-900 font-mono">
+                                        {currency} {totals.targetRevenue.toLocaleString()}
+                                    </div>
+                                </div>
+                                <div className="bg-emerald-50 p-2 rounded-lg border border-emerald-100">
+                                    <div className="text-[9px] font-bold text-emerald-700 uppercase">Actual Active Revenue</div>
+                                    <div className="text-sm font-black text-emerald-800 font-mono">
+                                        {currency} {totals.actualMonthlyRevenue.toLocaleString()}
+                                    </div>
+                                </div>
+                                <div className="bg-amber-50 p-2 rounded-lg border border-amber-100">
+                                    <div className="text-[9px] font-bold text-amber-700 uppercase">Monthly Operating Budget</div>
+                                    <div className="text-sm font-black text-amber-900 font-mono">
+                                        {currency} {totals.operatingCost.toLocaleString()}
+                                    </div>
+                                </div>
+                                <div className="bg-blue-50 p-2 rounded-lg border border-blue-100">
+                                    <div className="text-[9px] font-bold text-blue-700 uppercase">Target Net Profit</div>
+                                    <div className="text-sm font-black text-blue-900 font-mono">
+                                        {currency} {totalTargetProfit.toLocaleString()}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Overall Progress Bar */}
+                            <div className="space-y-1 pt-1">
+                                <div className="flex justify-between text-[10px] font-bold text-gray-600">
+                                    <span>Goal Progress ({totals.actualMonthlyRevenue.toLocaleString()} / {totals.targetRevenue.toLocaleString()})</span>
+                                    <span>{totalAchievement}%</span>
+                                </div>
+                                <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                                    <div
+                                        className={`h-2 rounded-full transition-all duration-300 ${totalAchievement >= 100 ? 'bg-emerald-500' : 'bg-brand-primary'}`}
+                                        style={{ width: `${Math.min(100, totalAchievement)}%` }}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Per-Floor Cards with Inline Inputs */}
+                        <div className="space-y-2.5">
+                            <div className="text-[11px] font-black text-gray-700 uppercase tracking-wider flex items-center justify-between">
+                                <span>Floor by Floor Breakdown</span>
+                                <span className="text-[9px] text-gray-500 font-normal">Edit numbers per floor below</span>
+                            </div>
+
+                            {config.levels.map((level, idx) => {
+                                const summary = getLevelFinancialSummary(level, config.pricePerCbm);
+                                const isCanvasActive = config.activeLevelId === level.id;
+
+                                return (
+                                    <div
+                                        key={level.id}
+                                        className={`p-3 rounded-xl border transition-all ${
+                                            isCanvasActive
+                                                ? 'bg-white border-brand-accent shadow-md ring-1 ring-brand-accent/40'
+                                                : 'bg-white/90 border-gray-200 hover:border-amber-300'
+                                        }`}
+                                    >
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div className="flex items-center gap-1.5">
+                                                <span className="w-5 h-5 rounded-md bg-brand-primary text-brand-accent font-mono font-black text-xs flex items-center justify-center">
+                                                    {idx + 1}
+                                                </span>
+                                                <span className="font-bold text-xs text-gray-900">{level.name}</span>
+                                                {isCanvasActive && (
+                                                    <span className="text-[9px] bg-emerald-100 text-emerald-800 font-black px-1.5 py-0.5 rounded uppercase">
+                                                        Active Floor
+                                                    </span>
+                                                )}
+                                            </div>
+
+                                            <div className="flex items-center gap-1">
+                                                {!isCanvasActive && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => onChange({ ...config, activeLevelId: level.id })}
+                                                        className="text-[10px] px-2 py-0.5 rounded bg-gray-100 text-gray-700 hover:bg-brand-accent hover:text-black font-bold transition-colors"
+                                                    >
+                                                        Make Active
+                                                    </button>
+                                                )}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setSelectedFloorForFinance(level.id)}
+                                                    className="text-[10px] px-2 py-0.5 rounded bg-amber-100 text-amber-900 hover:bg-amber-200 font-bold transition-colors flex items-center gap-0.5"
+                                                >
+                                                    Configure <ArrowUpRight size={10} />
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {/* 4 Financial Inputs for this floor */}
+                                        <div className="grid grid-cols-2 gap-2 text-xs">
+                                            {/* Floor Target Price per CBM */}
+                                            <div>
+                                                <label className="block text-[9px] font-bold text-gray-600 uppercase mb-0.5">
+                                                    Target Price / CBM
+                                                </label>
+                                                <div className="relative">
+                                                    <span className="absolute left-2 top-1.5 text-[10px] font-bold text-gray-400">
+                                                        {currency}
+                                                    </span>
+                                                    <input
+                                                        type="number"
+                                                        value={level.pricePerCbm !== undefined ? level.pricePerCbm : config.pricePerCbm}
+                                                        disabled={!isAdmin}
+                                                        onChange={(e) => updateLevel(level.id, 'pricePerCbm', Number(e.target.value))}
+                                                        className="w-full text-xs border rounded-md p-1.5 pl-9 font-mono font-bold border-gray-300 focus:border-brand-accent focus:ring-1 focus:ring-brand-accent disabled:bg-gray-100"
+                                                        placeholder="25"
+                                                    />
+                                                    <span className="absolute right-2 top-1.5 text-[9px] text-gray-400 font-medium">/m³</span>
+                                                </div>
+                                            </div>
+
+                                            {/* Floor Target Monthly Revenue */}
+                                            <div>
+                                                <label className="block text-[9px] font-bold text-gray-600 uppercase mb-0.5">
+                                                    Monthly Goal
+                                                </label>
+                                                <div className="relative">
+                                                    <span className="absolute left-2 top-1.5 text-[10px] font-bold text-gray-400">
+                                                        {currency}
+                                                    </span>
+                                                    <input
+                                                        type="number"
+                                                        value={level.targetRevenue !== undefined ? level.targetRevenue : summary.targetRevenue}
+                                                        disabled={!isAdmin}
+                                                        onChange={(e) => updateLevel(level.id, 'targetRevenue', Number(e.target.value))}
+                                                        className="w-full text-xs border rounded-md p-1.5 pl-9 font-mono font-bold border-gray-300 focus:border-brand-accent focus:ring-1 focus:ring-brand-accent disabled:bg-gray-100"
+                                                        placeholder="20000"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            {/* Floor Operating Budget */}
+                                            <div>
+                                                <label className="block text-[9px] font-bold text-gray-600 uppercase mb-0.5">
+                                                    Operating Budget
+                                                </label>
+                                                <div className="relative">
+                                                    <span className="absolute left-2 top-1.5 text-[10px] font-bold text-gray-400">
+                                                        {currency}
+                                                    </span>
+                                                    <input
+                                                        type="number"
+                                                        value={level.operatingCost !== undefined ? level.operatingCost : 0}
+                                                        disabled={!isAdmin}
+                                                        onChange={(e) => updateLevel(level.id, 'operatingCost', Number(e.target.value))}
+                                                        className="w-full text-xs border rounded-md p-1.5 pl-9 font-mono font-bold border-gray-300 focus:border-brand-accent focus:ring-1 focus:ring-brand-accent disabled:bg-gray-100"
+                                                        placeholder="0"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            {/* Floor Target Occupancy % */}
+                                            <div>
+                                                <label className="block text-[9px] font-bold text-gray-600 uppercase mb-0.5">
+                                                    Target Occupancy %
+                                                </label>
+                                                <div className="relative">
+                                                    <input
+                                                        type="number"
+                                                        value={level.targetOccupancyRate !== undefined ? level.targetOccupancyRate : 85}
+                                                        disabled={!isAdmin}
+                                                        onChange={(e) => updateLevel(level.id, 'targetOccupancyRate', Number(e.target.value))}
+                                                        className="w-full text-xs border rounded-md p-1.5 pr-6 font-mono font-bold border-gray-300 focus:border-brand-accent focus:ring-1 focus:ring-brand-accent disabled:bg-gray-100"
+                                                        placeholder="85"
+                                                    />
+                                                    <span className="absolute right-2 top-1.5 text-[10px] text-gray-400 font-bold">%</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Floor Progress & Yield Strip */}
+                                        <div className="mt-2.5 pt-2 border-t border-gray-100 space-y-1">
+                                            <div className="flex items-center justify-between text-[10px] font-bold">
+                                                <span className="text-gray-500">
+                                                    Actual Revenue: <span className="text-emerald-700 font-mono font-black">{currency} {summary.actualMonthlyRevenue.toLocaleString()}</span> / {summary.targetRevenue.toLocaleString()}
+                                                </span>
+                                                <span className={`font-mono font-black ${summary.achievementPercent >= 100 ? 'text-emerald-700' : 'text-amber-800'}`}>
+                                                    {summary.achievementPercent}% Goal
+                                                </span>
+                                            </div>
+                                            <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+                                                <div
+                                                    className={`h-1.5 rounded-full transition-all duration-300 ${summary.achievementPercent >= 100 ? 'bg-emerald-500' : 'bg-brand-accent'}`}
+                                                    style={{ width: `${Math.min(100, summary.achievementPercent)}%` }}
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                );
+            })()}
+
+            {/* VIEW MODE: SINGLE FLOOR FOCUS */}
+            {selectedFloorForFinance !== 'all' && (() => {
+                const currentFloor = config.levels.find(l => l.id === selectedFloorForFinance) || config.levels[0];
+                if (!currentFloor) return null;
+                const summary = getLevelFinancialSummary(currentFloor, config.pricePerCbm);
+                const isCanvasActive = config.activeLevelId === currentFloor.id;
+
+                const auto85Revenue = Math.round((currentFloor.totalVolumeCapacity || 0) * (currentFloor.pricePerCbm ?? config.pricePerCbm) * 0.85);
+
+                return (
+                    <div className="space-y-3 bg-white p-3.5 rounded-xl border border-yellow-300 shadow-xs">
+                        <div className="flex items-center justify-between border-b border-gray-100 pb-2">
+                            <div>
+                                <div className="text-xs font-black text-gray-900 uppercase flex items-center gap-1.5">
+                                    <span>{currentFloor.name} Financial Settings</span>
+                                    {isCanvasActive && (
+                                        <span className="text-[9px] bg-emerald-100 text-emerald-800 font-black px-1.5 py-0.5 rounded uppercase">
+                                            Canvas Active
+                                        </span>
+                                    )}
+                                </div>
+                                <div className="text-[10px] text-gray-500">
+                                    Capacity: {currentFloor.totalVolumeCapacity} m³ • Elevation: {currentFloor.elevation} cm
+                                </div>
+                            </div>
+
+                            {!isCanvasActive && (
+                                <button
+                                    type="button"
+                                    onClick={() => onChange({ ...config, activeLevelId: currentFloor.id })}
+                                    className="text-[10px] px-2.5 py-1 rounded bg-brand-primary text-brand-accent font-bold hover:bg-black transition-colors"
+                                >
+                                    Activate Canvas
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Input 1: Floor Target Price per CBM */}
+                        <div>
+                            <div className="flex items-center justify-between mb-1">
+                                <label className="text-xs font-bold text-gray-800">
+                                    Target Price per CBM ({currency}/m³)
+                                </label>
+                                {isAdmin && config.levels.length > 1 && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const p = currentFloor.pricePerCbm ?? config.pricePerCbm ?? 25;
+                                            const newLevels = config.levels.map(l => ({ ...l, pricePerCbm: p }));
+                                            onChange({ ...config, pricePerCbm: p, levels: newLevels });
+                                            setCopiedPriceNotice(`Applied ${currency} ${p}/m³ to all floors!`);
+                                            setTimeout(() => setCopiedPriceNotice(null), 3000);
+                                        }}
+                                        className="text-[10px] text-amber-700 hover:text-black font-bold flex items-center gap-1 underline decoration-amber-400"
+                                        title="Copy this price to all floors"
+                                    >
+                                        <Copy size={10} /> Apply to all floors
+                                    </button>
+                                )}
+                            </div>
+                            <div className="relative">
+                                <span className="absolute left-3 top-2 text-sm text-gray-500 font-bold">{currency}</span>
+                                <input
+                                    type="number"
+                                    value={currentFloor.pricePerCbm !== undefined ? currentFloor.pricePerCbm : config.pricePerCbm}
+                                    disabled={!isAdmin}
+                                    onChange={(e) => updateLevel(currentFloor.id, 'pricePerCbm', Number(e.target.value))}
+                                    className="block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-accent focus:ring-brand-accent sm:text-sm border p-2 pl-12 font-mono font-bold disabled:bg-gray-100"
+                                    placeholder="25"
+                                />
+                                <span className="absolute right-3 top-2 text-xs text-gray-400">/ m³</span>
+                            </div>
+                            <p className="text-[10px] text-gray-500 mt-1">
+                                Specific billing rate for {currentFloor.name}. Used when creating shipper contracts on this floor.
+                            </p>
+                        </div>
+
+                        {/* Input 2: Floor Monthly Revenue Goal */}
+                        <div>
+                            <div className="flex items-center justify-between mb-1">
+                                <label className="text-xs font-bold text-gray-800">
+                                    Target Monthly Revenue ({currency})
+                                </label>
+                                {isAdmin && (
+                                    <button
+                                        type="button"
+                                        onClick={() => updateLevel(currentFloor.id, 'targetRevenue', auto85Revenue)}
+                                        className="text-[10px] text-blue-700 hover:text-black font-bold flex items-center gap-1 underline decoration-blue-300"
+                                        title="Set target to 85% capacity yield"
+                                    >
+                                        <Calculator size={10} /> Auto-fill 85% ({currency} {auto85Revenue.toLocaleString()})
+                                    </button>
+                                )}
+                            </div>
+                            <div className="relative">
+                                <span className="absolute left-3 top-2 text-sm text-gray-500 font-bold">{currency}</span>
+                                <input
+                                    type="number"
+                                    value={currentFloor.targetRevenue !== undefined ? currentFloor.targetRevenue : summary.targetRevenue}
+                                    disabled={!isAdmin}
+                                    onChange={(e) => updateLevel(currentFloor.id, 'targetRevenue', Number(e.target.value))}
+                                    className="block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-accent focus:ring-brand-accent sm:text-sm border p-2 pl-12 font-mono font-bold disabled:bg-gray-100"
+                                    placeholder="20000"
+                                />
+                                <span className="absolute right-3 top-2 text-xs text-gray-400">/ month</span>
+                            </div>
+                        </div>
+
+                        {/* Input 3: Floor Monthly Operating Cost / Budget */}
+                        <div className="grid grid-cols-2 gap-2">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-800 mb-1">
+                                    Operating Budget ({currency})
+                                </label>
+                                <div className="relative">
+                                    <span className="absolute left-2.5 top-2 text-xs text-gray-500 font-bold">{currency}</span>
+                                    <input
+                                        type="number"
+                                        value={currentFloor.operatingCost !== undefined ? currentFloor.operatingCost : 0}
+                                        disabled={!isAdmin}
+                                        onChange={(e) => updateLevel(currentFloor.id, 'operatingCost', Number(e.target.value))}
+                                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-accent focus:ring-brand-accent text-xs border p-2 pl-10 font-mono font-bold disabled:bg-gray-100"
+                                        placeholder="0"
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-gray-800 mb-1">
+                                    Occupancy Goal (%)
+                                </label>
+                                <div className="relative">
+                                    <input
+                                        type="number"
+                                        value={currentFloor.targetOccupancyRate !== undefined ? currentFloor.targetOccupancyRate : 85}
+                                        disabled={!isAdmin}
+                                        onChange={(e) => updateLevel(currentFloor.id, 'targetOccupancyRate', Number(e.target.value))}
+                                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-accent focus:ring-brand-accent text-xs border p-2 pr-7 font-mono font-bold disabled:bg-gray-100"
+                                        placeholder="85"
+                                    />
+                                    <span className="absolute right-2.5 top-2 text-xs text-gray-400 font-bold">%</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Real-Time Live Performance Dashboard for this Floor */}
+                        <div className="bg-gray-50 rounded-xl p-3 border border-gray-200 space-y-2.5">
+                            <div className="text-[10px] font-black text-gray-600 uppercase tracking-wider flex items-center justify-between">
+                                <span>{currentFloor.name} Live Financial Analytics</span>
+                                <span className={`font-mono font-black ${summary.achievementPercent >= 100 ? 'text-emerald-700' : 'text-amber-800'}`}>
+                                    {summary.achievementPercent}% of Goal
+                                </span>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div className="bg-white p-2 rounded-lg border border-gray-200">
+                                    <div className="text-[9px] font-bold text-gray-400 uppercase">Actual Monthly</div>
+                                    <div className="text-sm font-black text-emerald-700 font-mono">
+                                        {currency} {summary.actualMonthlyRevenue.toLocaleString()}
+                                    </div>
+                                    <div className="text-[9px] text-gray-400">{summary.activeJobsCount} active contracts</div>
+                                </div>
+
+                                <div className="bg-white p-2 rounded-lg border border-gray-200">
+                                    <div className="text-[9px] font-bold text-gray-400 uppercase">Target Monthly Goal</div>
+                                    <div className="text-sm font-black text-gray-900 font-mono">
+                                        {currency} {summary.targetRevenue.toLocaleString()}
+                                    </div>
+                                    <div className="text-[9px] text-gray-400">Yield target</div>
+                                </div>
+
+                                <div className="bg-white p-2 rounded-lg border border-gray-200">
+                                    <div className="text-[9px] font-bold text-gray-400 uppercase">Target Net Profit</div>
+                                    <div className="text-sm font-black text-blue-700 font-mono">
+                                        {currency} {summary.targetProfit.toLocaleString()}
+                                    </div>
+                                    <div className="text-[9px] text-gray-400">After overhead</div>
+                                </div>
+
+                                <div className="bg-white p-2 rounded-lg border border-gray-200">
+                                    <div className="text-[9px] font-bold text-gray-400 uppercase">100% Capacity Max</div>
+                                    <div className="text-sm font-black text-brand-primary font-mono">
+                                        {currency} {summary.potentialCapacityRevenue.toLocaleString()}
+                                    </div>
+                                    <div className="text-[9px] text-gray-400">{currentFloor.totalVolumeCapacity} m³ total</div>
+                                </div>
+                            </div>
+
+                            {/* Revenue Goal Progress Bar */}
+                            <div className="space-y-1">
+                                <div className="flex justify-between text-[10px] font-bold text-gray-600">
+                                    <span>Goal Achievement</span>
+                                    <span>{summary.actualMonthlyRevenue.toLocaleString()} / {summary.targetRevenue.toLocaleString()} {currency}</span>
+                                </div>
+                                <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                                    <div
+                                        className={`h-2 rounded-full transition-all duration-300 ${summary.achievementPercent >= 100 ? 'bg-emerald-500' : 'bg-brand-primary'}`}
+                                        style={{ width: `${Math.min(100, summary.achievementPercent)}%` }}
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Physical Volume Occupancy */}
+                            <div className="space-y-1">
+                                <div className="flex justify-between text-[10px] font-bold text-gray-600">
+                                    <span>Floor CBM Occupancy</span>
+                                    <span>{summary.occupiedCbm} m³ / {summary.totalVolumeCapacity} m³ ({summary.occupancyPercent}%)</span>
+                                </div>
+                                <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+                                    <div
+                                        className={`h-1.5 rounded-full transition-all duration-300 ${summary.occupancyPercent > 90 ? 'bg-red-500' : 'bg-brand-accent'}`}
+                                        style={{ width: `${Math.min(100, summary.occupancyPercent)}%` }}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
+
+            {/* Warehouse Global Baseline Reference */}
+            <div className="mt-3 pt-2.5 border-t border-yellow-200/80 flex items-center justify-between text-xs">
+                <span className="text-[10px] font-bold text-gray-500 uppercase">
+                    Warehouse Baseline Fallback:
+                </span>
+                <div className="flex items-center gap-1 font-mono font-bold text-gray-700">
+                    <span>{currency}</span>
+                    <input
+                        type="number"
                         value={config.pricePerCbm}
                         disabled={!isAdmin}
                         onChange={(e) => handleChange('pricePerCbm', e.target.value)}
-                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-accent focus:ring-brand-accent sm:text-sm border p-2 pl-12 disabled:bg-gray-100 disabled:text-gray-500 font-mono font-bold"
+                        className="w-16 p-1 text-xs border rounded font-mono font-bold text-right border-gray-300 disabled:bg-gray-100"
                     />
-                     <span className="absolute right-3 top-2 text-xs text-gray-400">/ m³</span>
+                    <span className="text-[10px] text-gray-400">/ m³</span>
                 </div>
-                <p className="text-[10px] text-gray-500 mt-1">AI will generate a design based on this yield.</p>
             </div>
         </section>
 
@@ -342,6 +865,28 @@ const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizin
                                     );
                                 })()}
                             </div>
+
+                            {/* Floor Financial Goals Chip */}
+                            {(() => {
+                                const fSummary = getLevelFinancialSummary(level, config.pricePerCbm);
+                                return (
+                                    <div className="mt-1 pt-1.5 border-t border-gray-100 flex items-center justify-between text-[10px]">
+                                        <div className="flex items-center gap-1.5 text-gray-600 font-bold">
+                                            <Coins size={11} className="text-amber-600" />
+                                            <span>{currency} {fSummary.pricePerCbm}/m³</span>
+                                            <span className="text-gray-300">|</span>
+                                            <span className="text-gray-500">Goal: {currency} {fSummary.targetRevenue.toLocaleString()}</span>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setSelectedFloorForFinance(level.id)}
+                                            className="text-[9px] text-amber-700 hover:text-black font-black uppercase tracking-wider flex items-center gap-0.5"
+                                        >
+                                            Financials <ArrowUpRight size={9} />
+                                        </button>
+                                    </div>
+                                );
+                            })()}
                         </div>
                     );
                 })}

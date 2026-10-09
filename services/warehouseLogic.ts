@@ -229,3 +229,82 @@ export const getLevelOccupiedCbm = (level: Level): number => {
   });
   return Math.round(total * 100) / 100;
 };
+
+/**
+ * Calculates current actual monthly normalized revenue for a level from active shipper jobs
+ */
+export const getLevelMonthlyRevenue = (level: Level): number => {
+  let total = 0;
+  level.items.forEach(item => {
+    if (item.rackDetails?.jobs) {
+      item.rackDetails.jobs.forEach(job => {
+        if (job.status === 'active') {
+          const price = job.pricePerMonth || 0;
+          const cycle = job.paymentCycle || 'Monthly';
+          if (cycle === 'Monthly') total += price;
+          else if (cycle === 'Quarterly') total += price / 3;
+          else if (cycle === 'Yearly') total += price / 12;
+        }
+      });
+    }
+  });
+  return Math.round(total);
+};
+
+export interface FloorFinancialSummary {
+  levelId: string;
+  levelName: string;
+  pricePerCbm: number;
+  totalVolumeCapacity: number;
+  occupiedCbm: number;
+  occupancyPercent: number;
+  targetOccupancyRate: number;
+  actualMonthlyRevenue: number;
+  potentialCapacityRevenue: number;
+  targetRevenue: number;
+  operatingCost: number;
+  targetProfit: number;
+  currentProfit: number;
+  achievementPercent: number;
+  activeJobsCount: number;
+}
+
+export const getLevelFinancialSummary = (level: Level, fallbackPricePerCbm: number = 25): FloorFinancialSummary => {
+  const pricePerCbm = level.pricePerCbm ?? fallbackPricePerCbm;
+  const capacity = level.totalVolumeCapacity || 0;
+  const occupiedCbm = getLevelOccupiedCbm(level);
+  const occupancyPercent = capacity > 0 ? Math.min(100, Math.round((occupiedCbm / capacity) * 100)) : 0;
+  const targetOccupancyRate = level.targetOccupancyRate ?? 85;
+  const potentialCapacityRevenue = capacity * pricePerCbm;
+  const targetRevenue = level.targetRevenue !== undefined ? level.targetRevenue : Math.round(potentialCapacityRevenue * (targetOccupancyRate / 100));
+  const operatingCost = level.operatingCost ?? 0;
+  const actualMonthlyRevenue = getLevelMonthlyRevenue(level);
+  const targetProfit = targetRevenue - operatingCost;
+  const currentProfit = actualMonthlyRevenue - operatingCost;
+  const achievementPercent = targetRevenue > 0 ? Math.min(999, Math.round((actualMonthlyRevenue / targetRevenue) * 100)) : 0;
+
+  let activeJobsCount = 0;
+  level.items.forEach(item => {
+    if (item.rackDetails?.jobs) {
+      activeJobsCount += item.rackDetails.jobs.filter(j => j.status === 'active').length;
+    }
+  });
+
+  return {
+    levelId: level.id,
+    levelName: level.name,
+    pricePerCbm,
+    totalVolumeCapacity: capacity,
+    occupiedCbm,
+    occupancyPercent,
+    targetOccupancyRate,
+    actualMonthlyRevenue,
+    potentialCapacityRevenue,
+    targetRevenue,
+    operatingCost,
+    targetProfit,
+    currentProfit,
+    achievementPercent,
+    activeJobsCount
+  };
+};
