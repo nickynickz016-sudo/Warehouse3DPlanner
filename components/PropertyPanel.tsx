@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { LayoutItem, WarehouseConfig, RackDetails, JobEntry, BRANCH_MAP } from '../types';
 import { 
     RotateCw, AlignJustify, QrCode, Download, Activity, 
-    User, Plus, FileDown, Trash2, Box, Clock, X, Package, Maximize, Copy, Calendar, Check
+    User, Plus, FileDown, Trash2, Box, Clock, X, Package, Maximize, Copy, Calendar, Check, Footprints
 } from 'lucide-react';
 import { generateShipperPassport } from '../services/pdfService';
 
@@ -23,6 +23,7 @@ interface Props {
     onUpdateConfig: (field: string, value: any) => void;
     onIssuePassport: (item: LayoutItem) => void;
     onClose: () => void;
+    onLocateWalk?: (item: LayoutItem) => void;
 }
 
 const PropertyPanel: React.FC<Props> = ({ 
@@ -31,7 +32,8 @@ const PropertyPanel: React.FC<Props> = ({
     onDuplicate, onDelete,
     onGenerateQR, qrCodeUrl, onManagePackages, onUpdateConfig,
     onIssuePassport,
-    onClose
+    onClose,
+    onLocateWalk
 }) => {
     if (selectedItemIds.length === 0) return null;
 
@@ -43,7 +45,7 @@ const PropertyPanel: React.FC<Props> = ({
     const supportsQR = selectedItem && ['rack', 'open_cabin', 'open_space_storage', 'temp_storage'].includes(selectedItem.type);
 
     return (
-        <div className="w-80 h-full bg-gray-50 border-l border-gray-200 overflow-y-auto custom-scrollbar flex flex-col shadow-xl z-30">
+        <div className="w-full h-full bg-gray-50 border-l border-gray-200 overflow-y-auto custom-scrollbar flex flex-col shadow-xl">
             <div className="bg-brand-primary text-white p-4 flex justify-between items-center shrink-0 border-b-2 border-brand-accent">
                 <div className="flex items-center gap-2">
                     <Activity size={18} className="text-brand-accent" />
@@ -182,6 +184,18 @@ const PropertyPanel: React.FC<Props> = ({
                     </div>
                 ) : selectedItem && (
                     <>
+                        {/* Quick Walk Navigation Action */}
+                        {onLocateWalk && (
+                            <button
+                                onClick={() => onLocateWalk(selectedItem)}
+                                className="w-full py-2.5 px-4 bg-brand-primary hover:bg-black text-brand-accent rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 shadow-sm transition-all active:scale-98 cursor-pointer border border-brand-accent/30"
+                                title="Simulate walking path with footsteps to this cabin/unit"
+                            >
+                                <Footprints size={15} />
+                                <span>Walk to {selectedItem.type === 'open_cabin' || selectedItem.rackDetails?.enclosureType === 'Close Cabin' ? 'Cabin' : 'Unit'}</span>
+                            </button>
+                        )}
+
                         {/* Basic Info */}
                         <div className="space-y-4">
                             <div className="flex items-center gap-2 pb-1 border-b border-gray-100">
@@ -296,25 +310,31 @@ const PropertyPanel: React.FC<Props> = ({
 
                                     <div className="space-y-3">
                                         {selectedItem.rackDetails.jobs?.map((job) => (
-                                            <div key={job.id} className="p-3 bg-white border border-gray-200 rounded-lg shadow-sm relative group animate-in slide-in-from-right-2 duration-200">
-                                                {isAdmin && (
-                                                    <div className="absolute top-2 right-2 flex items-center gap-2">
-                                                        <button 
-                                                            onClick={() => generateShipperPassport(job, config.name)}
-                                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-primary text-brand-accent hover:bg-black rounded-lg transition-all text-[10px] font-black uppercase tracking-widest shadow-sm active:scale-95"
-                                                            title="Download Shipper Passport Archive"
-                                                        >
-                                                            <FileDown size={14}/> ARCHIVE PASSPORT
-                                                        </button>
-                                                        <button 
-                                                            onClick={() => onRemoveJob(job.id)}
-                                                            className="p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded transition-all"
-                                                            title="Delete Job"
-                                                        >
-                                                            <Trash2 size={12}/>
-                                                        </button>
-                                                    </div>
-                                                )}
+                                            <div key={job.id} className="p-3 bg-white border border-gray-200 rounded-lg shadow-sm group animate-in slide-in-from-right-2 duration-200 space-y-2.5">
+                                                {/* Header row to prevent button overlap */}
+                                                <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+                                                    <span className="text-[10px] font-black uppercase tracking-wider text-gray-500">
+                                                        Job Record
+                                                    </span>
+                                                    {isAdmin && (
+                                                        <div className="flex items-center gap-1.5">
+                                                            <button 
+                                                                onClick={() => generateShipperPassport(job, config.name)}
+                                                                className="flex items-center gap-1 px-2.5 py-1 bg-brand-primary text-brand-accent hover:bg-black rounded-lg transition-all text-[9px] font-black uppercase tracking-wider shadow-sm active:scale-95 cursor-pointer"
+                                                                title="Download Shipper Passport Archive"
+                                                            >
+                                                                <FileDown size={12}/> Passport
+                                                            </button>
+                                                            <button 
+                                                                onClick={() => onRemoveJob(job.id)}
+                                                                className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-all cursor-pointer"
+                                                                title="Delete Job"
+                                                            >
+                                                                <Trash2 size={13}/>
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
                                                 <div className="space-y-2">
                                                     <div>
                                                         <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Job #</label>

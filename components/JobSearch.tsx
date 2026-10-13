@@ -1,22 +1,24 @@
 import React, { useState, useMemo } from 'react';
-import { WarehouseConfig, JobEntry, LayoutItem, BranchCode, BRANCH_LIST, BRANCH_MAP } from '../types';
+import { WarehouseConfig, JobEntry, LayoutItem, BranchCode, BRANCH_LIST, BRANCH_MAP, LocateTargetInfo } from '../types';
 import { Search, MapPin, Calendar, User, Coins, Clock, X, Cuboid as BoxIcon, ChevronDown, Building2, ExternalLink, Globe } from 'lucide-react';
 
 interface Props {
     config: WarehouseConfig;
     warehouses?: WarehouseConfig[];
     activeBranch?: BranchCode;
-    onSelectWarehouseAndItem?: (warehouseId: string, itemId: string, branch: BranchCode) => void;
+    onSelectWarehouseAndItem?: (warehouseId: string, itemId: string, branch: BranchCode, levelId?: string, locateInfo?: LocateTargetInfo) => void;
     onClose: () => void;
 }
 
 interface SearchResult {
-    job: JobEntry;
+    job?: JobEntry;
     item: LayoutItem;
+    levelId: string;
     levelName: string;
     warehouseId: string;
     warehouseName: string;
     branch: BranchCode;
+    isUnitOnly?: boolean;
 }
 
 const JobSearch: React.FC<Props> = ({ config, warehouses, activeBranch, onSelectWarehouseAndItem, onClose }) => {
@@ -59,12 +61,16 @@ const JobSearch: React.FC<Props> = ({ config, warehouses, activeBranch, onSelect
             (wh.levels || []).forEach(level => {
                 (level.items || []).forEach(item => {
                     const details = item.rackDetails;
-                    if (!details) return;
+                    const isCabin = item.type === 'open_cabin' || details?.enclosureType === 'Close Cabin' || (typeof item.label === 'string' && item.label.toLowerCase().includes('cabin'));
+                    const unitLabel = (item.label || item.id || '').toLowerCase();
+                    const itemType = (item.type || '').toLowerCase();
+                    const whName = (wh.name || '').toLowerCase();
+                    const levelName = (level.name || '').toLowerCase();
 
                     // Collect all jobs, including legacy single entries if present
-                    const jobsList: JobEntry[] = (details.jobs && details.jobs.length > 0)
+                    const jobsList: JobEntry[] = (details && details.jobs && details.jobs.length > 0)
                         ? details.jobs
-                        : (details.jobNumber || details.shipperName)
+                        : (details && (details.jobNumber || details.shipperName))
                             ? [{
                                 id: `legacy-${item.id}`,
                                 jobNumber: details.jobNumber || '',
@@ -79,37 +85,65 @@ const JobSearch: React.FC<Props> = ({ config, warehouses, activeBranch, onSelect
                             }]
                             : [];
 
-                    jobsList.forEach(job => {
-                        const jobNum = (job.jobNumber || '').toLowerCase();
-                        const shipper = (job.shipperName || '').toLowerCase();
-                        const sales = (details.salesPerson || '').toLowerCase();
-                        const unitLabel = (item.label || item.id || '').toLowerCase();
-                        const whName = (wh.name || '').toLowerCase();
-                        const fullJobNum = `${bInfo.jobPrefix.toLowerCase()}${jobNum}`;
+                    if (jobsList.length > 0) {
+                        jobsList.forEach(job => {
+                            const jobNum = (job.jobNumber || '').toLowerCase();
+                            const shipper = (job.shipperName || '').toLowerCase();
+                            const sales = (details?.salesPerson || '').toLowerCase();
+                            const fullJobNum = `${bInfo.jobPrefix.toLowerCase()}${jobNum}`;
+                            const notes = (job.notes || '').toLowerCase();
+                            const hasMatchingPackage = job.packages?.some(p => String(p.number).includes(rawQuery) || String(p.number) === cleanQuery);
 
-                        const matchesSearch = !rawQuery || 
-                            jobNum.includes(rawQuery) || 
-                            jobNum.includes(cleanQuery) ||
-                            fullJobNum.includes(rawQuery) ||
-                            shipper.includes(rawQuery) ||
-                            sales.includes(rawQuery) ||
+                            const matchesSearch = !rawQuery || 
+                                jobNum.includes(rawQuery) || 
+                                jobNum.includes(cleanQuery) ||
+                                fullJobNum.includes(rawQuery) ||
+                                shipper.includes(rawQuery) ||
+                                sales.includes(rawQuery) ||
+                                unitLabel.includes(rawQuery) ||
+                                notes.includes(rawQuery) ||
+                                hasMatchingPackage ||
+                                whName.includes(rawQuery) ||
+                                levelName.includes(rawQuery) ||
+                                (isCabin && rawQuery.includes('cabin')) ||
+                                bInfo.country.toLowerCase().includes(rawQuery);
+
+                            const matchesFilter = typeFilter === 'ALL' || job.storageType === typeFilter;
+
+                            if (matchesSearch && matchesFilter) {
+                                found.push({
+                                    job,
+                                    item,
+                                    levelId: level.id,
+                                    levelName: level.name,
+                                    warehouseId: wh.id,
+                                    warehouseName: wh.name,
+                                    branch: whBranch
+                                });
+                            }
+                        });
+                    } else if (typeFilter === 'ALL' && (item.type === 'open_cabin' || item.type === 'rack' || item.type === 'office' || item.type === 'store' || item.type === 'open_space_storage')) {
+                        // Allow searching units/cabins directly even when empty
+                        const matchesUnitSearch = !rawQuery ||
                             unitLabel.includes(rawQuery) ||
+                            itemType.includes(rawQuery) ||
+                            (isCabin && (rawQuery.includes('cabin') || rawQuery === 'cabin')) ||
                             whName.includes(rawQuery) ||
+                            levelName.includes(rawQuery) ||
                             bInfo.country.toLowerCase().includes(rawQuery);
 
-                        const matchesFilter = typeFilter === 'ALL' || job.storageType === typeFilter;
-
-                        if (matchesSearch && matchesFilter) {
+                        if (matchesUnitSearch) {
                             found.push({
-                                job,
                                 item,
+                                levelId: level.id,
                                 levelName: level.name,
                                 warehouseId: wh.id,
                                 warehouseName: wh.name,
-                                branch: whBranch
+                                branch: whBranch,
+                                isUnitOnly: true
                             });
                         }
-                    });
+                    }
                 });
             });
         });
@@ -233,6 +267,78 @@ const JobSearch: React.FC<Props> = ({ config, warehouses, activeBranch, onSelect
                         {results.length > 0 ? (
                             results.map((res, idx) => {
                                 const bInfo = BRANCH_MAP[res.branch] || BRANCH_MAP['UAE'];
+                                const isCabin = res.item.type === 'open_cabin' || res.item.rackDetails?.enclosureType === 'Close Cabin' || (typeof res.item.label === 'string' && res.item.label.toLowerCase().includes('cabin'));
+                                const itemLabel = res.item.label || (isCabin ? 'Cabin' : 'Storage Unit');
+
+                                if (res.isUnitOnly || !res.job) {
+                                    return (
+                                        <div key={`unit-${res.item.id}-${idx}`} className="bg-white border-2 border-gray-200 hover:border-brand-primary rounded-xl p-4 transition-all shadow-sm hover:shadow-md group">
+                                            <div className="flex flex-wrap justify-between items-start gap-2 mb-3">
+                                                <div>
+                                                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                                        <span className="bg-teal-700 text-white text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-widest">
+                                                            {isCabin ? 'Cabin' : res.item.type.replace('_', ' ')}
+                                                        </span>
+                                                        <span className="text-xl font-bold text-gray-900">
+                                                            {itemLabel}
+                                                        </span>
+                                                        {/* Branch & Facility Badge */}
+                                                        <span className="bg-gray-100 text-gray-800 font-bold text-[10px] px-2.5 py-0.5 rounded-md uppercase tracking-wider flex items-center gap-1.5 border border-gray-200">
+                                                            <span>{bInfo.flag}</span>
+                                                            <span className="text-brand-primary font-black">{bInfo.code}</span>
+                                                            <span className="text-gray-300">|</span>
+                                                            <span>{res.warehouseName}</span>
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-xs text-gray-500 font-semibold flex items-center gap-1.5">
+                                                        <MapPin size={13} className="text-brand-accent shrink-0" />
+                                                        <span>Located on <strong className="text-gray-800">{res.levelName}</strong> • {res.item.width}cm × {res.item.height}cm</span>
+                                                    </p>
+                                                </div>
+
+                                                <div className="flex items-center gap-2">
+                                                    <span className="inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-blue-50 text-blue-700 border border-blue-200">
+                                                        {res.item.rackDetails?.status || 'Available'}
+                                                    </span>
+                                                    {onSelectWarehouseAndItem && (
+                                                        <button
+                                                            onClick={() => onSelectWarehouseAndItem(res.warehouseId, res.item.id, res.branch, res.levelId, {
+                                                                itemId: res.item.id,
+                                                                timestamp: Date.now(),
+                                                                warehouseId: res.warehouseId,
+                                                                branch: res.branch,
+                                                                levelId: res.levelId,
+                                                                label: res.item.label || res.item.id,
+                                                                isCabin: isCabin
+                                                            })}
+                                                            className="flex items-center gap-1.5 px-3.5 py-2 bg-brand-primary hover:bg-black text-brand-accent text-xs font-bold rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
+                                                            title={`Switch to ${bInfo.name} - ${res.warehouseName} and highlight ${itemLabel}`}
+                                                        >
+                                                            <ExternalLink size={14} />
+                                                            <span>Locate</span>
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs font-medium bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+                                                <div>
+                                                    <p className="text-[9px] font-bold uppercase text-gray-400">Unit ID</p>
+                                                    <p className="font-mono text-gray-700 text-[11px] truncate">{res.item.id}</p>
+                                                </div>
+                                                <div>
+                                                    <p className="text-[9px] font-bold uppercase text-gray-400">Enclosure</p>
+                                                    <p className="font-bold text-gray-800">{res.item.rackDetails?.enclosureType || (isCabin ? 'Close Cabin' : 'Open Space')}</p>
+                                                </div>
+                                                <div>
+                                                    <p className="text-[9px] font-bold uppercase text-gray-400">Status</p>
+                                                    <p className="font-bold text-green-700">Ready for Assignment</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                }
+
                                 return (
                                     <div key={`${res.job.id}-${idx}`} className="bg-white border-2 border-gray-200 hover:border-brand-primary rounded-xl p-4 transition-all shadow-sm hover:shadow-md group">
                                         <div className="flex flex-wrap justify-between items-start gap-2 mb-3">
@@ -272,7 +378,18 @@ const JobSearch: React.FC<Props> = ({ config, warehouses, activeBranch, onSelect
                                                 </span>
                                                 {onSelectWarehouseAndItem && (
                                                     <button
-                                                        onClick={() => onSelectWarehouseAndItem(res.warehouseId, res.item.id, res.branch)}
+                                                        onClick={() => onSelectWarehouseAndItem(res.warehouseId, res.item.id, res.branch, res.levelId, {
+                                                            itemId: res.item.id,
+                                                            timestamp: Date.now(),
+                                                            warehouseId: res.warehouseId,
+                                                            branch: res.branch,
+                                                            levelId: res.levelId,
+                                                            jobNumber: res.job.jobNumber ? `${bInfo.jobPrefix}${res.job.jobNumber}` : undefined,
+                                                            shipperName: res.job.shipperName,
+                                                            label: res.item.label || res.item.id,
+                                                            isCabin: isCabin,
+                                                            storageType: res.job.storageType
+                                                        })}
                                                         className="flex items-center gap-1 px-3 py-1.5 bg-brand-primary hover:bg-black text-brand-accent text-xs font-bold rounded-lg transition-colors shadow-sm active:scale-95"
                                                         title={`Switch to ${bInfo.name} - ${res.warehouseName} and highlight this unit`}
                                                     >

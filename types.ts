@@ -144,3 +144,16 @@ export interface GeminiOptimizationResult {
   maxCbm: string;
   generatedLayout?: LayoutItem[]; // The AI generated design
 }
+
+export interface LocateTargetInfo {
+  itemId: string;
+  timestamp: number;
+  warehouseId?: string;
+  branch?: BranchCode;
+  levelId?: string;
+  jobNumber?: string;
+  shipperName?: string;
+  label?: string;
+  isCabin?: boolean;
+  storageType?: string;
+}

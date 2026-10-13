@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { WarehouseConfig, Level, StorageStats, GeminiOptimizationResult, BRANCH_MAP, BRANCH_LIST, BranchCode, StorageType, ForkliftType } from '../types';
 import { calculateDimensionsFromArea, getLevelOccupiedCbm, getLevelFinancialSummary, getLevelMonthlyRevenue } from '../services/warehouseLogic';
-import { Settings, Truck, Box, Ruler, Thermometer, Layers, Plus, Trash2, Database, Eye, Check, Lock, Coins, TrendingUp, Edit2, Eraser, Save, BarChart3, ChevronDown, ChevronUp, Package, Maximize, Sparkles, Building2, Globe, Warehouse, Target, DollarSign, Calculator, Percent, ArrowUpRight, Copy } from 'lucide-react';
+import { Settings, Truck, Box, Ruler, Thermometer, Layers, Plus, Trash2, Database, Eye, Check, Lock, Coins, TrendingUp, Edit2, Eraser, Save, BarChart3, ChevronDown, ChevronUp, Package, Maximize, Sparkles, Building2, Globe, Warehouse, Target, DollarSign, Calculator, Percent, ArrowUpRight, Copy, X } from 'lucide-react';
+import { ConfirmProceedModal } from './ConfirmProceedModal';
 
 interface Props {
   config: WarehouseConfig;
@@ -14,9 +15,10 @@ interface Props {
   aiResult: GeminiOptimizationResult | null;
   isStatsOpen: boolean;
   onToggleStats: () => void;
+  onClose?: () => void;
 }
 
-const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizing, isAdmin, onSave, stats, aiResult, isStatsOpen, onToggleStats }) => {
+const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizing, isAdmin, onSave, stats, aiResult, isStatsOpen, onToggleStats, onClose }) => {
   const currency = config.branch ? (BRANCH_MAP[config.branch]?.currency || 'AED') : 'AED';
   const [selectedFloorForFinance, setSelectedFloorForFinance] = useState<string>('all');
   const [copiedPriceNotice, setCopiedPriceNotice] = useState<string | null>(null);
@@ -47,6 +49,9 @@ const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizin
     onChange(newConfig);
   };
 
+  const [levelToClear, setLevelToClear] = useState<Level | null>(null);
+  const [levelToDelete, setLevelToDelete] = useState<Level | null>(null);
+
   const addLevel = () => {
     if (!isAdmin) return;
     const defaultPrice = config.pricePerCbm || 25;
@@ -67,9 +72,82 @@ const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizin
     onChange(newConfig);
   };
 
-  const removeLevel = (id: string) => {
+  // Copy current floor items and layout settings to the next floor (either duplicate to a new floor or copy to next existing floor)
+  const copyLevelToNewFloor = (sourceLevel: Level) => {
     if (!isAdmin) return;
-    if (config.levels.length <= 1) return;
+    // Deep clone items with fresh IDs to avoid collision
+    const clonedItems = sourceLevel.items.map((item, index) => ({
+      ...item,
+      id: `${item.type}-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`
+    }));
+
+    const newElevation = (config.levels.length) * (sourceLevel.height || 400);
+    const newLevel: Level = {
+      id: `level-${Date.now()}`,
+      name: `Level ${config.levels.length + 1} (Copy of ${sourceLevel.name})`,
+      elevation: newElevation,
+      height: sourceLevel.height,
+      totalVolumeCapacity: sourceLevel.totalVolumeCapacity,
+      items: clonedItems,
+      pricePerCbm: sourceLevel.pricePerCbm,
+      targetRevenue: sourceLevel.targetRevenue,
+      operatingCost: sourceLevel.operatingCost,
+      targetOccupancyRate: sourceLevel.targetOccupancyRate
+    };
+
+    const newConfig = {
+      ...config,
+      levels: [...config.levels, newLevel],
+      activeLevelId: newLevel.id
+    };
+    onChange(newConfig);
+  };
+
+  // Copy current floor layout to the immediately next floor in the stack
+  const copyLevelToNextFloor = (currentIndex: number) => {
+    if (!isAdmin) return;
+    const currentLevel = config.levels[currentIndex];
+    if (!currentLevel) return;
+
+    if (currentIndex < config.levels.length - 1) {
+      // Next floor exists: overwrite next floor's items with a clone of current floor items
+      const nextLevel = config.levels[currentIndex + 1];
+      const clonedItems = currentLevel.items.map((item, index) => ({
+        ...item,
+        id: `${item.type}-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`
+      }));
+
+      const newLevels = config.levels.map((lvl, idx) => {
+        if (idx === currentIndex + 1) {
+          return {
+            ...lvl,
+            items: clonedItems,
+            totalVolumeCapacity: currentLevel.totalVolumeCapacity,
+            pricePerCbm: currentLevel.pricePerCbm ?? lvl.pricePerCbm,
+            targetRevenue: currentLevel.targetRevenue ?? lvl.targetRevenue
+          };
+        }
+        return lvl;
+      });
+
+      onChange({
+        ...config,
+        levels: newLevels,
+        activeLevelId: nextLevel.id
+      });
+    } else {
+      // No next floor exists: create next floor pre-populated with current floor layout
+      copyLevelToNewFloor(currentLevel);
+    }
+  };
+
+  const executeRemoveLevel = () => {
+    if (!isAdmin || !levelToDelete) return;
+    if (config.levels.length <= 1) {
+      setLevelToDelete(null);
+      return;
+    }
+    const id = levelToDelete.id;
     const newLevels = config.levels.filter(l => l.id !== id);
     const newConfig = { 
         ...config, 
@@ -77,23 +155,18 @@ const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizin
         activeLevelId: newLevels[0].id // Safety fallback to ground
     };
     onChange(newConfig);
+    setLevelToDelete(null);
   };
 
-  const [confirmClearLevelId, setConfirmClearLevelId] = useState<string | null>(null);
-
-  const clearLevelItems = (id: string) => {
-      if (!isAdmin) return;
-      if (confirmClearLevelId === id) {
-          const newLevels = config.levels.map(l => {
-              if (l.id === id) return { ...l, items: [] };
-              return l;
-          });
-          onChange({ ...config, levels: newLevels, mode: 'custom' });
-          setConfirmClearLevelId(null);
-      } else {
-          setConfirmClearLevelId(id);
-          setTimeout(() => setConfirmClearLevelId(null), 3500);
-      }
+  const executeClearLevelItems = () => {
+    if (!isAdmin || !levelToClear) return;
+    const id = levelToClear.id;
+    const newLevels = config.levels.map(l => {
+        if (l.id === id) return { ...l, items: [] };
+        return l;
+    });
+    onChange({ ...config, levels: newLevels, mode: 'custom' });
+    setLevelToClear(null);
   };
 
   const updateLevel = (id: string, field: keyof Level, value: any) => {
@@ -113,15 +186,26 @@ const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizin
             <Settings size={20} className="text-brand-accent" />
             Parameters
             </h2>
-            {isAdmin && (
-                <button 
-                    onClick={onSave}
-                    className="bg-brand-accent text-black p-1.5 rounded hover:bg-yellow-400 transition-colors"
-                    title="Save Changes"
-                >
-                    <Save size={16} />
-                </button>
-            )}
+            <div className="flex items-center gap-1.5">
+                {isAdmin && (
+                    <button 
+                        onClick={onSave}
+                        className="bg-brand-accent text-black p-1.5 rounded hover:bg-yellow-400 transition-colors"
+                        title="Save Changes"
+                    >
+                        <Save size={16} />
+                    </button>
+                )}
+                {onClose && (
+                    <button
+                        onClick={onClose}
+                        className="p-1.5 text-gray-300 hover:text-white hover:bg-white/10 rounded transition-colors"
+                        title="Close Parameters"
+                    >
+                        <X size={18} />
+                    </button>
+                )}
+            </div>
         </div>
         <div className="flex justify-between items-center mt-1">
              <p className="text-xs text-gray-400">Define your warehouse specs</p>
@@ -782,18 +866,32 @@ const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizin
                                     {isActive ? 'Active' : 'View'}
                                 </button>
                                 
-                                <div className="flex items-center gap-1">
+                                 <div className="flex items-center gap-1">
                                     {isAdmin && (
-                                        <button 
-                                            onClick={() => clearLevelItems(level.id)} 
-                                            title={confirmClearLevelId === level.id ? "Click again to confirm clear" : "Clear All Items in Level"}
-                                            className={`p-1 rounded text-xs transition-all flex items-center gap-1 ${confirmClearLevelId === level.id ? 'bg-red-500 text-white font-bold px-2 py-0.5' : 'text-gray-400 hover:text-orange-500'}`}
-                                        >
-                                            {confirmClearLevelId === level.id ? 'Clear Items?' : <Eraser size={14} />}
-                                        </button>
+                                        <>
+                                            <button 
+                                                onClick={() => copyLevelToNextFloor(idx)} 
+                                                title={idx < config.levels.length - 1 ? `Copy items & layout of this floor to ${config.levels[idx + 1].name}` : "Create next floor pre-filled with this floor's items"}
+                                                className="px-2 py-0.5 rounded text-[11px] font-bold transition-all flex items-center gap-1 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300"
+                                            >
+                                                <Copy size={12} />
+                                                <span>Copy to Next</span>
+                                            </button>
+                                            <button 
+                                                onClick={() => setLevelToClear(level)} 
+                                                title={`Clear all ${level.items.length} items from ${level.name}`}
+                                                className="p-1 rounded text-xs transition-all flex items-center gap-1 text-gray-400 hover:text-orange-500 hover:bg-orange-50"
+                                            >
+                                                <Eraser size={14} />
+                                            </button>
+                                        </>
                                     )}
                                     {config.levels.length > 1 && isAdmin && (
-                                        <button onClick={() => removeLevel(level.id)} className="text-gray-400 hover:text-red-600 p-1">
+                                        <button 
+                                            onClick={() => setLevelToDelete(level)} 
+                                            title={`Delete ${level.name}`}
+                                            className="text-gray-400 hover:text-red-600 hover:bg-red-50 p-1 rounded"
+                                        >
                                             <Trash2 size={14} />
                                         </button>
                                     )}
@@ -1111,6 +1209,34 @@ const InputPanel: React.FC<Props> = ({ config, onChange, onOptimize, isOptimizin
       <div className="mt-auto p-4 border-t text-xs text-gray-400 text-center">
         Writer Warehouse Planner Pro v1.0
       </div>
+
+      {/* Clear Level Items Confirmation */}
+      <ConfirmProceedModal
+        isOpen={!!levelToClear}
+        title={`Clear Items from ${levelToClear?.name || 'Floor'}?`}
+        message={
+          <div>
+            This will permanently remove all <span className="font-bold text-gray-900">{levelToClear?.items.length || 0} layout units</span> (racks, cabins, offices, zones) on <span className="font-bold text-gray-900">{levelToClear?.name}</span>.
+          </div>
+        }
+        confirmButtonText="Clear Items"
+        onConfirm={executeClearLevelItems}
+        onCancel={() => setLevelToClear(null)}
+      />
+
+      {/* Delete Floor Confirmation */}
+      <ConfirmProceedModal
+        isOpen={!!levelToDelete}
+        title={`Delete Floor: ${levelToDelete?.name || ''}?`}
+        message={
+          <div>
+            This will permanently delete <span className="font-bold text-gray-900">{levelToDelete?.name}</span> along with all its <span className="font-bold text-gray-900">{levelToDelete?.items.length || 0} layout items</span> and financial targets. This action cannot be undone.
+          </div>
+        }
+        confirmButtonText="Delete Floor"
+        onConfirm={executeRemoveLevel}
+        onCancel={() => setLevelToDelete(null)}
+      />
     </div>
   );
 };
